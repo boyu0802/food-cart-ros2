@@ -1,0 +1,40 @@
+nt_bridge:
+  ros__parameters:
+    # ===== NT4 client connection =====
+    team_number: 6998
+    # If non-empty, used instead of team_number (e.g. "10.69.98.2" or "roborio-6998-frc.local")
+    server_address: ""
+    nt_client_name: "orange_pi_nav"
+
+    # ===== enable/disable each direction =====
+    enable_cmd_vel_out: true
+    enable_odom_in: true
+    enable_imu_in: true
+
+    # ===== ROS2 topic names =====
+    cmd_vel_topic: "/cmd_vel"
+    cmd_vel_stamped: false        # set true if Nav2 publishes TwistStamped
+    cmd_vel_max_age: 0.5          # secs without /cmd_vel before bridge sends zeros (safety)
+
+    odom_topic: "/odom"
+    imu_topic: "/imu"
+
+    # ===== NT table names (RoboRIO must match) =====
+    nt_cmd_table: "Nav/cmd"       # publishes vx, vy, omega, heartbeat, timestamp
+    nt_odom_table: "Robot/odom"   # subscribes x, y, theta, vx, vy, omega
+    nt_imu_table: "Robot/imu"     # subscribes yaw, yaw_rate, accel_x, accel_y
+
+    # ===== rates =====
+    odom_publish_rate: 50.0       # Hz
+    imu_publish_rate: 100.0       # Hz
+
+    # ===== TF =====
+    publish_odom_tf: true         # nt_bridge -> odom -> base_link
+    base_frame_id: "base_link"
+    odom_frame_id: "odom"
+    imu_frame_id: "imu_link"
+
+    # ===== covariances (tune to actual sensors) =====
+    yaw_variance: 0.01
+    yaw_rate_variance: 0.001
+    accel_xy_variance: 0.1

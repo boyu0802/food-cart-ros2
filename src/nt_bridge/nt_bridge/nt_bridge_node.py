@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""NetworkTables 4 <-> ROS2 bridge for Team 6998 autonomous food cart.
+
+Three flows:
+  ROS2  /cmd_vel        ->  NT  Nav/cmd/{vx,vy,omega,heartbeat,timestamp}
+  NT    Robot/odom/*    ->  ROS2 nav_msgs/Odometry on /odom (+ optional TF)
+  NT    Robot/imu/*     ->  ROS2 sensor_msgs/Imu on /imu
+
+Watchdog: if no /cmd_vel arrives within `cmd_vel_max_age` seconds, the bridge
+publishes (0, 0, 0) to NT so the RoboRIO stops the swerve.
+"""
+
+import math
+from threading import Lock
+from typing import Optional
+
+import ntcore
+import rclpy
+from rclpy.node import Node
+from geometry_msgs.msg import Twist, TwistStamped, TransformStamped
+from nav_msgs.msg import Odometry
+from sensor_msgs.msg import Imu
+from tf2_ros import TransformBroadcaster
+
+
+LARGE_COV = 1e6
+
+
+def yaw_to_quat(yaw: float):
+    half = yaw * 0.5
+    return (0.0, 0.0, math.sin(half), math.cos(half))
+
+
+class NtBridge(Node):
+    def __init__(self) -> None:
+        super().__init__('nt_bridge')
+
+        self.declare_parameters(namespace='', parameters=[
+            ('team_number', 6998),
+            ('server_address', ''),
+            ('nt_client_name', 'orange_pi_nav'),
+            ('enable_cmd_vel_out', True),
+            ('enable_odom_in', True),
+            ('enable_imu_in', True),
+            ('cmd_vel_topic', '/cmd_vel'),
+            ('cmd_vel_stamped', False),
+            ('cmd_vel_max_age', 0.5),
+            ('odom_topic', '/odom'),
+            ('imu_topic', '/imu'),
+            ('nt_cmd_table', 'Nav/cmd'),
+            ('nt_odom_table', 'Robot/odom'),
+            ('nt_imu_table', 'Robot/imu'),
+            ('odom_publish_rate', 50.0),
+            ('imu_publish_rate', 100.0),
+            ('publish_odom_tf', True),
+            ('base_frame_id', 'base_link'),
+            ('odom_frame_id', 'odom'),
+            ('imu_frame_id', 'imu_link'),
+            ('yaw_variance', 0.01),
+            ('yaw_rate_variance', 0.001),
+            ('accel_xy_variance', 0.1),
+        ])
+        gp = lambda n: self.get_parameter(n).value
+
+        # ---- NT4 client ----
+        self._nt = ntcore.NetworkTableInstance.getDefault()
+        self._nt.startClient4(gp('nt_client_name'))
+        server_addr = gp('server_address').strip()
+        if server_addr:
+            self._nt.setServer(server_addr, ntcore.NetworkTableInstance.kDefaultPort4)
+            self.get_logger().info(f"NT4 server: {server_addr}:{ntcore.NetworkTableInstance.kDefaultPort4}")
+        else:
+            team = int(gp('team_number'))
+            self._nt.setServerTeam(team)
+            self.get_logger().info(
+                f"NT4 server: team {team} (10.{team // 100}.{team % 100}.2)")
+
+        # ---- ROS2 -> NT (cmd_vel) ----
+        self._cmd_lock = Lock()
+        self._last_cmd_stamp: Optional[float] = None
+        self._heartbeat = 0
+        if gp('enable_cmd_vel_out'):
+            cmd_table = self._nt.getTable(gp('nt_cmd_table'))
+            self._pub_vx = cmd_table.getDoubleTopic('vx').publish()
+            self._pub_vy = cmd_table.getDoubleTopic('vy').publish()
+            self._pub_omega = cmd_table.getDoubleTopic('omega').publish()
+            self._pub_heartbeat = cmd_table.getIntegerTopic('heartbeat').publish()
+            self._pub_ts = cmd_table.getDoubleTopic('timestamp').publish()
+            self._publish_cmd(0.0, 0.0, 0.0)
+
+            if gp('cmd_vel_stamped'):
+                self.create_subscription(
+                    TwistStamped, gp('cmd_vel_topic'),
+                    self._on_cmd_vel_stamped, 10)
+            else:
+                self.create_subscription(
+                    Twist, gp('cmd_vel_topic'),
+                    self._on_cmd_vel, 10)
+
+            self.create_timer(0.05, self._cmd_vel_watchdog)
+
+        # ---- NT -> ROS2 (odom) ----
+        if gp('enable_odom_in'):
+            odom_table = self._nt.getTable(gp('nt_odom_table'))
+            self._sub_odom_x = odom_table.getDoubleTopic('x').subscribe(0.0)
+            self._sub_odom_y = odom_table.getDoubleTopic('y').subscribe(0.0)
+            self._sub_odom_theta = odom_table.getDoubleTopic('theta').subscribe(0.0)
+            self._sub_odom_vx = odom_table.getDoubleTopic('vx').subscribe(0.0)
+            self._sub_odom_vy = odom_table.getDoubleTopic('vy').subscribe(0.0)
+            self._sub_odom_omega = odom_table.getDoubleTopic('omega').subscribe(0.0)
+            self._odom_pub = self.create_publisher(Odometry, gp('odom_topic'), 10)
+            self._tf_broadcaster = (
+                TransformBroadcaster(self) if gp('publish_odom_tf') else None)
+            rate = float(gp('odom_publish_rate'))
+            self.create_timer(1.0 / rate, self._publish_odom)
+
+        # ---- NT -> ROS2 (imu) ----
+        if gp('enable_imu_in'):
+            imu_table = self._nt.getTable(gp('nt_imu_table'))
+            self._sub_imu_yaw = imu_table.getDoubleTopic('yaw').subscribe(0.0)
+            self._sub_imu_yaw_rate = imu_table.getDoubleTopic('yaw_rate').subscribe(0.0)
+            self._sub_imu_accel_x = imu_table.getDoubleTopic('accel_x').subscribe(0.0)
+            self._sub_imu_accel_y = imu_table.getDoubleTopic('accel_y').subscribe(0.0)
+            self._imu_pub = self.create_publisher(Imu, gp('imu_topic'), 10)
+            rate = float(gp('imu_publish_rate'))
+            self.create_timer(1.0 / rate, self._publish_imu)
+
+        self.get_logger().info('nt_bridge ready')
+
+    # ===== cmd_vel out =====
+    def _on_cmd_vel(self, msg: Twist) -> None:
+        with self._cmd_lock:
+            self._last_cmd_stamp = self.get_clock().now().nanoseconds * 1e-9
+        self._publish_cmd(msg.linear.x, msg.linear.y, msg.angular.z)
+
+    def _on_cmd_vel_stamped(self, msg: TwistStamped) -> None:
+        with self._cmd_lock:
+            self._last_cmd_stamp = self.get_clock().now().nanoseconds * 1e-9
+        self._publish_cmd(msg.twist.linear.x, msg.twist.linear.y, msg.twist.angular.z)
+
+    def _publish_cmd(self, vx: float, vy: float, omega: float) -> None:
+        now = self.get_clock().now().nanoseconds * 1e-9
+        self._pub_vx.set(float(vx))
+        self._pub_vy.set(float(vy))
+        self._pub_omega.set(float(omega))
+        self._heartbeat += 1
+        self._pub_heartbeat.set(self._heartbeat)
+        self._pub_ts.set(now)
+
+    def _cmd_vel_watchdog(self) -> None:
+        max_age = float(self.get_parameter('cmd_vel_max_age').value)
+        now = self.get_clock().now().nanoseconds * 1e-9
+        with self._cmd_lock:
+            last = self._last_cmd_stamp
+        if last is None or (now - last) > max_age:
+            self._publish_cmd(0.0, 0.0, 0.0)
+
+    # ===== odom in =====
+    def _publish_odom(self) -> None:
+        x = self._sub_odom_x.get()
+        y = self._sub_odom_y.get()
+        theta = self._sub_odom_theta.get()
+        vx = self._sub_odom_vx.get()
+        vy = self._sub_odom_vy.get()
+        omega = self._sub_odom_omega.get()
+
+        now = self.get_clock().now().to_msg()
+        qx, qy, qz, qw = yaw_to_quat(theta)
+        odom_frame = self.get_parameter('odom_frame_id').value
+        base_frame = self.get_parameter('base_frame_id').value
+
+        msg = Odometry()
+        msg.header.stamp = now
+        msg.header.frame_id = odom_frame
+        msg.child_frame_id = base_frame
+        msg.pose.pose.position.x = x
+        msg.pose.pose.position.y = y
+        msg.pose.pose.orientation.x = qx
+        msg.pose.pose.orientation.y = qy
+        msg.pose.pose.orientation.z = qz
+        msg.pose.pose.orientation.w = qw
+        msg.twist.twist.linear.x = vx
+        msg.twist.twist.linear.y = vy
+        msg.twist.twist.angular.z = omega
+        self._odom_pub.publish(msg)
+
+        if self._tf_broadcaster is not None:
+            t = TransformStamped()
+            t.header.stamp = now
+            t.header.frame_id = odom_frame
+            t.child_frame_id = base_frame
+            t.transform.translation.x = x
+            t.transform.translation.y = y
+            t.transform.rotation.x = qx
+            t.transform.rotation.y = qy
+            t.transform.rotation.z = qz
+            t.transform.rotation.w = qw
+            self._tf_broadcaster.sendTransform(t)
+
+    # ===== imu in =====
+    def _publish_imu(self) -> None:
+        yaw = self._sub_imu_yaw.get()
+        yaw_rate = self._sub_imu_yaw_rate.get()
+        ax = self._sub_imu_accel_x.get()
+        ay = self._sub_imu_accel_y.get()
+
+        qx, qy, qz, qw = yaw_to_quat(yaw)
+        yaw_var = float(self.get_parameter('yaw_variance').value)
+        yaw_rate_var = float(self.get_parameter('yaw_rate_variance').value)
+        accel_var = float(self.get_parameter('accel_xy_variance').value)
+
+        msg = Imu()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self.get_parameter('imu_frame_id').value
+        msg.orientation.x = qx
+        msg.orientation.y = qy
+        msg.orientation.z = qz
+        msg.orientation.w = qw
+        # roll/pitch unknown, yaw known
+        msg.orientation_covariance = [
+            LARGE_COV, 0.0, 0.0,
+            0.0, LARGE_COV, 0.0,
+            0.0, 0.0, yaw_var,
+        ]
+        msg.angular_velocity.z = yaw_rate
+        msg.angular_velocity_covariance = [
+            LARGE_COV, 0.0, 0.0,
+            0.0, LARGE_COV, 0.0,
+            0.0, 0.0, yaw_rate_var,
+        ]
+        msg.linear_acceleration.x = ax
+        msg.linear_acceleration.y = ay
+        msg.linear_acceleration_covariance = [
+            accel_var, 0.0, 0.0,
+            0.0, accel_var, 0.0,
+            0.0, 0.0, LARGE_COV,
+        ]
+        self._imu_pub.publish(msg)
+
+
+def main(args=None) -> None:
+    rclpy.init(args=args)
+    node = NtBridge()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
