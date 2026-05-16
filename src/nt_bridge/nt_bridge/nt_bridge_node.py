@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """NetworkTables 4 <-> ROS2 bridge for Team 6998 autonomous food cart.
 
-Three flows:
-  ROS2  /cmd_vel        ->  NT  Nav/cmd/{vx,vy,omega,heartbeat,timestamp}
-  NT    Robot/odom/*    ->  ROS2 nav_msgs/Odometry on /odom (+ optional TF)
-  NT    Robot/imu/*     ->  ROS2 sensor_msgs/Imu on /imu
+Four flows:
+  ROS2  /cmd_vel          ->  NT  Nav/cmd/{vx,vy,omega,heartbeat,timestamp}
+  NT    Robot/odom/*      ->  ROS2 nav_msgs/Odometry on /odom (+ optional TF)
+  NT    Robot/imu/*       ->  ROS2 sensor_msgs/Imu on /imu
+  NT    limelight/{tv,tid,tx,ty,ta,targetpose_robotspace}
+                          ->  ROS2 cart_elevator_msgs/TagDetection on /limelight/tag
 
 Watchdog: if no /cmd_vel arrives within `cmd_vel_max_age` seconds, the bridge
 publishes (0, 0, 0) to NT so the RoboRIO stops the swerve.
@@ -22,6 +24,8 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
 from tf2_ros import TransformBroadcaster
 
+from cart_elevator_msgs.msg import TagDetection
+
 
 LARGE_COV = 1e6
 
@@ -29,6 +33,22 @@ LARGE_COV = 1e6
 def yaw_to_quat(yaw: float):
     half = yaw * 0.5
     return (0.0, 0.0, math.sin(half), math.cos(half))
+
+
+def rpy_deg_to_quat(roll_deg: float, pitch_deg: float, yaw_deg: float):
+    """ZYX (yaw, pitch, roll) intrinsic Euler in degrees -> quaternion (x, y, z, w).
+    Matches the convention Limelight uses for targetpose_robotspace."""
+    r = math.radians(roll_deg) * 0.5
+    p = math.radians(pitch_deg) * 0.5
+    y = math.radians(yaw_deg) * 0.5
+    cr, sr = math.cos(r), math.sin(r)
+    cp, sp = math.cos(p), math.sin(p)
+    cy, sy = math.cos(y), math.sin(y)
+    qx = sr * cp * cy - cr * sp * sy
+    qy = cr * sp * cy + sr * cp * sy
+    qz = cr * cp * sy - sr * sp * cy
+    qw = cr * cp * cy + sr * sp * sy
+    return (qx, qy, qz, qw)
 
 
 class NtBridge(Node):
@@ -42,20 +62,25 @@ class NtBridge(Node):
             ('enable_cmd_vel_out', True),
             ('enable_odom_in', True),
             ('enable_imu_in', True),
+            ('enable_limelight_in', True),
             ('cmd_vel_topic', '/cmd_vel'),
             ('cmd_vel_stamped', False),
             ('cmd_vel_max_age', 0.5),
             ('odom_topic', '/odom'),
             ('imu_topic', '/imu'),
+            ('tag_topic', '/limelight/tag'),
             ('nt_cmd_table', 'Nav/cmd'),
             ('nt_odom_table', 'Robot/odom'),
             ('nt_imu_table', 'Robot/imu'),
+            ('nt_limelight_table', 'limelight'),
             ('odom_publish_rate', 50.0),
             ('imu_publish_rate', 100.0),
+            ('tag_publish_rate', 20.0),
             ('publish_odom_tf', True),
             ('base_frame_id', 'base_link'),
             ('odom_frame_id', 'odom'),
             ('imu_frame_id', 'imu_link'),
+            ('tag_frame_id', 'limelight'),
             ('yaw_variance', 0.01),
             ('yaw_rate_variance', 0.001),
             ('accel_xy_variance', 0.1),
@@ -124,6 +149,23 @@ class NtBridge(Node):
             self._imu_pub = self.create_publisher(Imu, gp('imu_topic'), 10)
             rate = float(gp('imu_publish_rate'))
             self.create_timer(1.0 / rate, self._publish_imu)
+
+        # ---- NT -> ROS2 (limelight tag) ----
+        if gp('enable_limelight_in'):
+            ll_table = self._nt.getTable(gp('nt_limelight_table'))
+            # tv: 1 if a target is currently visible, 0 otherwise
+            self._sub_ll_tv = ll_table.getIntegerTopic('tv').subscribe(0)
+            self._sub_ll_tid = ll_table.getIntegerTopic('tid').subscribe(-1)
+            self._sub_ll_tx = ll_table.getDoubleTopic('tx').subscribe(0.0)
+            self._sub_ll_ty = ll_table.getDoubleTopic('ty').subscribe(0.0)
+            self._sub_ll_ta = ll_table.getDoubleTopic('ta').subscribe(0.0)
+            # targetpose_robotspace: [x, y, z, pitch_deg, yaw_deg, roll_deg] in robot frame
+            self._sub_ll_pose = ll_table.getDoubleArrayTopic(
+                'targetpose_robotspace').subscribe([])
+            self._tag_pub = self.create_publisher(
+                TagDetection, gp('tag_topic'), 10)
+            rate = float(gp('tag_publish_rate'))
+            self.create_timer(1.0 / rate, self._publish_tag)
 
         self.get_logger().info('nt_bridge ready')
 
@@ -236,6 +278,46 @@ class NtBridge(Node):
             0.0, 0.0, LARGE_COV,
         ]
         self._imu_pub.publish(msg)
+
+    # ===== limelight tag in =====
+    def _publish_tag(self) -> None:
+        tv = int(self._sub_ll_tv.get())
+
+        msg = TagDetection()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self.get_parameter('tag_frame_id').value
+
+        if tv != 1:
+            # No target visible — publish sentinel so consumers see liveness.
+            msg.tag_id = -1
+            msg.area = 0.0
+            msg.tx_deg = 0.0
+            msg.ty_deg = 0.0
+            msg.has_pose = False
+            self._tag_pub.publish(msg)
+            return
+
+        msg.tag_id = int(self._sub_ll_tid.get())
+        msg.area = float(self._sub_ll_ta.get())
+        msg.tx_deg = float(self._sub_ll_tx.get())
+        msg.ty_deg = float(self._sub_ll_ty.get())
+
+        pose = self._sub_ll_pose.get()
+        if pose is not None and len(pose) >= 6:
+            x, y, z, pitch_deg, yaw_deg, roll_deg = pose[:6]
+            msg.has_pose = True
+            msg.pose_in_robot_frame.position.x = float(x)
+            msg.pose_in_robot_frame.position.y = float(y)
+            msg.pose_in_robot_frame.position.z = float(z)
+            qx, qy, qz, qw = rpy_deg_to_quat(roll_deg, pitch_deg, yaw_deg)
+            msg.pose_in_robot_frame.orientation.x = qx
+            msg.pose_in_robot_frame.orientation.y = qy
+            msg.pose_in_robot_frame.orientation.z = qz
+            msg.pose_in_robot_frame.orientation.w = qw
+        else:
+            msg.has_pose = False
+
+        self._tag_pub.publish(msg)
 
 
 def main(args=None) -> None:

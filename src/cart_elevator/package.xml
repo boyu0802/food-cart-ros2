@@ -1,18 +1,22 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>nt_bridge</name>
+  <name>cart_elevator</name>
   <version>0.1.0</version>
-  <description>NetworkTables 4 bridge between ROS2 (Nav2) and a FRC RoboRIO (team 6998 food cart)</description>
+  <description>Elevator interaction stack for the team 6998 food cart — floor detection, AprilTag alignment, direction recognition, safe-to-enter, docking.</description>
   <maintainer email="boyu0802chen@gmail.com">ros2</maintainer>
   <license>MIT</license>
 
   <depend>rclpy</depend>
+  <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
-  <depend>nav_msgs</depend>
   <depend>sensor_msgs</depend>
-  <depend>tf2_ros</depend>
   <depend>cart_elevator_msgs</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

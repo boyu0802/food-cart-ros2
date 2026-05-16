@@ -10,6 +10,7 @@ nt_bridge:
     enable_cmd_vel_out: true
     enable_odom_in: true
     enable_imu_in: true
+    enable_limelight_in: true     # Limelight AprilTag detections -> /limelight/tag
 
     # ===== ROS2 topic names =====
     cmd_vel_topic: "/cmd_vel"
@@ -18,21 +19,25 @@ nt_bridge:
 
     odom_topic: "/odom"
     imu_topic: "/imu"
+    tag_topic: "/limelight/tag"   # cart_elevator_msgs/TagDetection
 
     # ===== NT table names (RoboRIO must match) =====
     nt_cmd_table: "Nav/cmd"       # publishes vx, vy, omega, heartbeat, timestamp
     nt_odom_table: "Robot/odom"   # subscribes x, y, theta, vx, vy, omega
     nt_imu_table: "Robot/imu"     # subscribes yaw, yaw_rate, accel_x, accel_y
+    nt_limelight_table: "limelight"  # default Limelight table; "limelight-<name>" if renamed
 
     # ===== rates =====
     odom_publish_rate: 50.0       # Hz
     imu_publish_rate: 100.0       # Hz
+    tag_publish_rate: 20.0        # Hz; Limelight runs ~90 FPS, downsampled here
 
     # ===== TF =====
     publish_odom_tf: true         # nt_bridge -> odom -> base_link
     base_frame_id: "base_link"
     odom_frame_id: "odom"
     imu_frame_id: "imu_link"
+    tag_frame_id: "limelight"     # frame_id stamped on TagDetection messages
 
     # ===== covariances (tune to actual sensors) =====
     yaw_variance: 0.01

@@ -1,0 +1,71 @@
+###############################################################################
+# Floor-detector parameters. One YAML, four detectors, fully swappable.
+#
+# Defaults are tuned for a 1.5 m/s elevator with ~3.5m floor spacing —
+# adjust once we calibrate against the real elevator.
+###############################################################################
+
+floor_v1_apriltag:
+  ros__parameters:
+    tag_topic: /limelight/tag
+    output_topic: /elevator/floor_v1_apriltag
+    floor_tag_id_offset: 100      # tag 101 = floor 1, 102 = floor 2, ...
+    min_area: 0.005
+    full_conf_area: 0.05
+    confidence_floor: 0.70
+    confidence_ceil: 0.95
+
+floor_v2_time:
+  ros__parameters:
+    imu_topic: /imu
+    output_topic: /elevator/floor_v2_time
+    starting_floor: 1
+    elevator_speed_m_s: 1.5       # PLACEHOLDER — calibrate vs real elevator
+    floor_height_m: 3.5           # PLACEHOLDER
+    move_threshold_mss: 0.30
+    start_samples: 10
+    stop_samples: 100
+    publish_rate_hz: 5.0
+
+floor_v3_accel:
+  ros__parameters:
+    imu_topic: /imu
+    output_topic: /elevator/floor_v3_accel
+    starting_floor: 1
+    floor_height_m: 3.5
+    move_threshold_mss: 0.30
+    start_samples: 10
+    stop_samples: 100
+    bias_window_s: 5.0
+    publish_rate_hz: 5.0
+
+floor_v4_fusion:
+  ros__parameters:
+    v1_topic: /elevator/floor_v1_apriltag
+    v2_topic: /elevator/floor_v2_time
+    v3_topic: /elevator/floor_v3_accel
+    output_topic: /elevator/floor
+    tag_max_age_s: 1.5
+    time_max_age_s: 5.0
+    accel_max_age_s: 5.0
+    publish_rate_hz: 5.0
+
+fake_elevator_imu:
+  ros__parameters:
+    imu_topic: /imu
+    publish_rate_hz: 100.0
+    accel_mss: 1.0
+    floor_height_m: 3.5
+    pre_idle_s: 2.0
+    inter_trip_idle_s: 3.0
+    post_idle_s: 5.0
+    noise_std_mss: 0.02
+    bias_mss: 0.0
+    scenario: "+3"
+    loop: false
+
+fake_tag_publisher:
+  ros__parameters:
+    tag_topic: /limelight/tag
+    publish_rate_hz: 10.0
+    scenario: "2:101:0.04; 8:103:0.05; 14:104:0.06"
