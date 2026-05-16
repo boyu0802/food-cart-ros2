@@ -1,0 +1,141 @@
+<?xml version="1.0"?>
+<robot name="food_cart" xmlns:xacro="http://ros.org/wiki/xacro">
+
+  <!-- ============================================================ -->
+  <!--  PLACEHOLDER DIMENSIONS                                       -->
+  <!--  Update these once the physical cart is built. Everything     -->
+  <!--  else in this file references these properties.               -->
+  <!-- ============================================================ -->
+
+  <!-- Chassis bounding box (meters). LxWxH. -->
+  <xacro:property name="chassis_length" value="0.60"/>
+  <xacro:property name="chassis_width"  value="0.50"/>
+  <xacro:property name="chassis_height" value="0.30"/>
+  <xacro:property name="chassis_mass"   value="20.0"/>
+
+  <!-- Swerve wheel radius (only used to lift base_link off the ground). -->
+  <xacro:property name="wheel_radius" value="0.075"/>
+
+  <!-- Lidar mount relative to base_link (top of chassis, centered). -->
+  <xacro:property name="lidar_xyz" value="0.0 0.0 ${chassis_height/2 + 0.02}"/>
+  <xacro:property name="lidar_rpy" value="0 0 0"/>
+
+  <!-- D455 camera mount relative to base_link (front edge, mid height). -->
+  <xacro:property name="camera_xyz" value="${chassis_length/2} 0.0 0.0"/>
+  <xacro:property name="camera_rpy" value="0 0 0"/>
+
+  <!-- IMU mount (used for the RoboRIO Pigeon / NavX, NOT the D455 IMU). -->
+  <xacro:property name="imu_xyz" value="0.0 0.0 0.0"/>
+  <xacro:property name="imu_rpy" value="0 0 0"/>
+
+  <!-- Colors -->
+  <material name="cart_grey"><color rgba="0.4 0.4 0.45 1.0"/></material>
+  <material name="lidar_black"><color rgba="0.1 0.1 0.1 1.0"/></material>
+  <material name="camera_blue"><color rgba="0.1 0.3 0.7 1.0"/></material>
+  <material name="imu_red"><color rgba="0.7 0.1 0.1 1.0"/></material>
+
+  <!-- ============================================================ -->
+  <!--  base_footprint  (ground projection of base_link)             -->
+  <!-- ============================================================ -->
+
+  <link name="base_footprint"/>
+
+  <joint name="base_footprint_to_base_link" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 ${wheel_radius}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================ -->
+  <!--  base_link  (chassis)                                         -->
+  <!-- ============================================================ -->
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 ${chassis_height/2}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+      </geometry>
+      <material name="cart_grey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${chassis_height/2}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 ${chassis_height/2}" rpy="0 0 0"/>
+      <mass value="${chassis_mass}"/>
+      <inertia
+        ixx="${chassis_mass*(chassis_width*chassis_width + chassis_height*chassis_height)/12}"
+        iyy="${chassis_mass*(chassis_length*chassis_length + chassis_height*chassis_height)/12}"
+        izz="${chassis_mass*(chassis_length*chassis_length + chassis_width*chassis_width)/12}"
+        ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <!-- ============================================================ -->
+  <!--  laser  (Slamtec C1)                                          -->
+  <!--  Frame name 'laser' matches rplidar_ros default.              -->
+  <!-- ============================================================ -->
+
+  <joint name="base_to_laser" type="fixed">
+    <parent link="base_link"/>
+    <child link="laser"/>
+    <origin xyz="${lidar_xyz}" rpy="${lidar_rpy}"/>
+  </joint>
+
+  <link name="laser">
+    <visual>
+      <origin xyz="0 0 0.02" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.04" length="0.04"/>
+      </geometry>
+      <material name="lidar_black"/>
+    </visual>
+  </link>
+
+  <!-- ============================================================ -->
+  <!--  camera_link  (Intel RealSense D455)                          -->
+  <!--  The realsense2_camera node publishes its own internal optical-->
+  <!--  frames (camera_color_optical_frame, etc.) from camera_link.  -->
+  <!-- ============================================================ -->
+
+  <joint name="base_to_camera" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <origin xyz="${camera_xyz}" rpy="${camera_rpy}"/>
+  </joint>
+
+  <link name="camera_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.025 0.124 0.029"/>
+      </geometry>
+      <material name="camera_blue"/>
+    </visual>
+  </link>
+
+  <!-- ============================================================ -->
+  <!--  imu_link  (RoboRIO IMU via NT bridge)                        -->
+  <!-- ============================================================ -->
+
+  <joint name="base_to_imu" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="${imu_xyz}" rpy="${imu_rpy}"/>
+  </joint>
+
+  <link name="imu_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.03 0.03 0.01"/>
+      </geometry>
+      <material name="imu_red"/>
+    </visual>
+  </link>
+
+</robot>

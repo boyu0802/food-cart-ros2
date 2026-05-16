@@ -27,8 +27,12 @@ User on Pi: `ros2`. Workspace: `~/ros2_ws`.
 - **rplidar_ros** for the C1 lidar
 - **realsense2_camera** for the D455
 - **nt_bridge** (our package) — bridges ROS2 ↔ NetworkTables for the RoboRIO
+- **cart_description** (our package) — URDF / xacro for the cart
+- **cart_bringup** (our package) — launch + config for the full nav stack
+- **slam_toolbox** — online async mapping (configured, not yet driven on a real robot)
+- **nav2** — full navigation stack with MPPI controller (configured, not yet driven)
 
-Planned (not done yet): `slam_toolbox`, `nav2`, MPPI controller.
+Everything is scaffolded with PLACEHOLDER values; we'll re-tune once the chassis is built and the RoboRIO is wired.
 
 ---
 
@@ -123,23 +127,160 @@ Listens on `0.0.0.0:8765`.
 
 ---
 
-## State of the workspace
+## Nav stack scaffold (built 2026-05-16)
+
+Two new packages, designed so the *whole* navigation pipeline runs end-to-end the moment real hardware is ready. Placeholders are everywhere — every value that depends on the physical robot is tagged `# PLACEHOLDER` in YAML or pulled out into a `xacro:property` at the top of the URDF.
+
+### Package tree
 
 ```
 ~/ros2_ws/src/
-├── nt_bridge/      # our NT4 ↔ ROS2 bridge (built, not yet tested against real RoboRIO)
-└── rplidar_ros/    # Slamtec C1 driver
+├── cart_description/       # URDF / xacro for the cart
+│   ├── urdf/cart.urdf.xacro
+│   ├── launch/description.launch.py    # robot_state_publisher
+│   ├── rviz/                           # (empty, for later)
+│   ├── package.xml         # ament_cmake
+│   └── CMakeLists.txt      # installs share/{urdf,launch,rviz}
+│
+├── cart_bringup/           # launch + config for the full nav stack
+│   ├── config/
+│   │   ├── slam_toolbox.yaml
+│   │   └── nav2.yaml
+│   ├── launch/
+│   │   ├── description.launch.py  # (defined in cart_description, re-included)
+│   │   ├── sensors.launch.py      # lidar + D455 (no IMU)
+│   │   ├── slam.launch.py         # slam_toolbox async mapping
+│   │   ├── nav2.launch.py         # full nav2 stack
+│   │   └── bringup.launch.py      # composes everything
+│   ├── maps/                          # (empty, for saved maps later)
+│   ├── package.xml         # ament_cmake
+│   └── CMakeLists.txt      # installs share/{launch,config,maps}
+│
+├── nt_bridge/              # NT4 ↔ ROS2 bridge (built, not yet tested vs RoboRIO)
+└── rplidar_ros/            # Slamtec C1 driver (third-party, .gitignored)
 ```
 
-Build: `cd ~/ros2_ws && colcon build --symlink-install`
-Source: `source ~/ros2_ws/install/setup.bash`
+### cart_description — URDF
+
+`urdf/cart.urdf.xacro` defines this TF tree:
+
+```
+base_footprint           (ground projection, REP-105 root for nav)
+└── base_link            (chassis center, lifted by wheel_radius)
+    ├── laser            (Slamtec C1 mount — name 'laser' matches rplidar_ros default)
+    ├── camera_link      (D455 — driver publishes internal optical frames from here)
+    └── imu_link         (RoboRIO Pigeon/NavX — not the D455 IMU)
+```
+
+All 6 placeholder values are `xacro:property` at the top of the file:
+
+| Property | Default | Tune when |
+|---|---|---|
+| `chassis_length / width / height` | 0.60 / 0.50 / 0.30 m | Chassis built |
+| `chassis_mass` | 20.0 kg | Cart weighed |
+| `wheel_radius` | 0.075 m | Swerve modules picked |
+| `lidar_xyz` | top center, +2 cm above chassis | Lidar mounted |
+| `camera_xyz` | front edge, mid height | D455 mounted |
+| `imu_xyz` | center, identity | RoboRIO placed |
+
+`launch/description.launch.py` runs `robot_state_publisher` (and `joint_state_publisher`, harmless with no joints). It re-renders the xacro every launch so editing the URDF doesn't require a rebuild.
+
+Smoke-checked: `check_urdf` parses it cleanly with the tree shown above.
+
+### cart_bringup — launch + config
+
+Five launch files, layered so each layer can be brought up and debugged on its own.
+
+#### `launch/sensors.launch.py`
+
+Wraps the existing third-party launches:
+- `rplidar_ros/launch/rplidar_c1_launch.py` (publishes `/scan`)
+- `realsense2_camera/launch/rs_launch.py` with `enable_gyro:=false enable_accel:=false` (per the hardware quirk above) and `enable_color`, `enable_depth`, `align_depth.enable`, `pointcloud.enable` all true. Reminder: pointcloud arg doesn't propagate on the arm64 build — set `pointcloud__neon_.enable` at runtime.
+
+Toggles: `enable_lidar`, `enable_camera`.
+
+#### `launch/slam.launch.py` + `config/slam_toolbox.yaml`
+
+Online async mapping. Key choices:
+
+- `mode: mapping` (not localization — no saved map yet)
+- `map_frame: map`, `odom_frame: odom`, `base_frame: base_link` → matches the URDF and what nt_bridge publishes
+- `max_laser_range: 12.0` → Slamtec C1 spec
+- `resolution: 0.05` m/cell (PLACEHOLDER)
+- `minimum_travel_distance: 0.2 m`, `minimum_travel_heading: 0.2 rad` (PLACEHOLDER — these are the "how far must the robot move before adding a new scan?" knobs; tune once we know cart top speed)
+- Loop closure on (`do_loop_closing: true`) with default thresholds
+
+slam_toolbox is the *only* thing publishing `map → odom` while we're mapping. `nt_bridge` publishes `odom → base_link` (sits at identity until RoboRIO is live).
+
+#### `launch/nav2.launch.py` + `config/nav2.yaml`
+
+Full Nav2 with seven lifecycle-managed nodes:
+
+| Node | Plugin |
+|---|---|
+| `controller_server` | `nav2_mppi_controller::MPPIController` (FollowPath) |
+| `planner_server` | `nav2_navfn_planner::NavfnPlanner` (GridBased, Dijkstra) |
+| `smoother_server` | `nav2_smoother::SimpleSmoother` |
+| `behavior_server` | spin, backup, drive_on_heading, wait, assisted_teleop |
+| `bt_navigator` | bundled default BT |
+| `waypoint_follower` | wait_at_waypoint |
+| `velocity_smoother` | rate-limits `cmd_vel_nav → cmd_vel` |
+
+We deliberately skipped `map_server` and `amcl` — slam_toolbox is publishing the live map and `map → odom` TF itself. When we switch to pure-localization mode later, we'll add them.
+
+MPPI is configured for **omni** motion (`motion_model: "Omni"`) since swerve can independently command `vx`, `vy`, `omega`. `PreferForwardCritic` is disabled for the same reason. Critic mix: Constraint, Cost, Goal, GoalAngle, PathAlign, PathFollow, PathAngle.
+
+Velocity-smoother remap chain: `controller_server` publishes to `cmd_vel_nav`, `velocity_smoother` reads that and publishes the smoothed result to `cmd_vel`, which `nt_bridge` then forwards as NT4 `Nav/cmd/{vx,vy,omega}` to the RoboRIO.
+
+```
+nav2 → cmd_vel_nav → velocity_smoother → cmd_vel → nt_bridge → NT4 → RoboRIO
+```
+
+Placeholders in `nav2.yaml` (grep `# PLACEHOLDER`):
+- Footprint polygon (currently `[[±0.30, ±0.25]]` matching chassis defaults)
+- `inflation_radius` (0.45 local, 0.55 global)
+- `vx_max / vy_max / wz_max` and matching mins
+- `ax_max / ay_max / az_max` (MPPI accel constraints)
+- `xy_goal_tolerance / yaw_goal_tolerance`
+- `velocity_smoother` max accel/decel arrays
+- `behavior_server` rotational vel/accel
+
+#### `launch/bringup.launch.py`
+
+Composes everything. Six `enable_*` toggles let you isolate any layer:
+
+```bash
+ros2 launch cart_bringup bringup.launch.py
+ros2 launch cart_bringup bringup.launch.py enable_nav2:=false               # just description + sensors + slam
+ros2 launch cart_bringup bringup.launch.py enable_sensors:=false enable_slam:=false  # nav2 against a recorded bag
+ros2 launch cart_bringup bringup.launch.py enable_nt_bridge:=false          # no RoboRIO hardware
+```
+
+Toggles: `enable_description`, `enable_sensors`, `enable_nt_bridge`, `enable_slam`, `enable_nav2`, `enable_foxglove`.
+
+### Build & source
+
+```bash
+cd ~/ros2_ws && colcon build --symlink-install
+source ~/ros2_ws/install/setup.bash
+```
+
+Both new packages built clean on first try (5.98 s total). The five launch files all import without error; `check_urdf` confirms the xacro produces a well-formed tree.
+
+### Where to retune for the real robot
+
+When the chassis is built and the RoboRIO is wired, in order:
+
+1. **`cart_description/urdf/cart.urdf.xacro`** — set `chassis_*`, `wheel_radius`, `lidar_xyz`, `camera_xyz`, `imu_xyz` from real measurements.
+2. **`cart_bringup/config/nav2.yaml`** — update the footprint polygon to match `chassis_*`; set `vx_max`/`vy_max`/`wz_max` from measured top speed; set `ax_max`/`ay_max` from measured / safe accel.
+3. **`cart_bringup/config/slam_toolbox.yaml`** — usually fine as-is; revisit `minimum_travel_*` if cart moves much faster or slower than expected.
 
 ---
 
 ## What's next
 
+- [ ] Plug in real chassis / mount dimensions (update xacro properties)
 - [ ] Test `nt_bridge` against the RoboRIO (or a sim NT server)
-- [ ] URDF + static TF tree so lidar and camera frames are aligned in Foxglove
-- [ ] `slam_toolbox` for live mapping
-- [ ] `nav2` with MPPI controller
+- [ ] First mapping run with `slam_toolbox` once the robot can move
+- [ ] Tune MPPI critics against measured top speed / accel
 - [ ] D455-based obstacle layer for small / moving / low-profile obstacles
