@@ -277,10 +277,114 @@ When the chassis is built and the RoboRIO is wired, in order:
 
 ---
 
+## Elevator interaction stack (built 2026-05-16)
+
+Two more packages, plus a Limelight extension to `nt_bridge`. Goal: ride a building elevator autonomously — track which floor we're on, recognise the up/down arrow on the display, and dock to an AprilTag inside the car.
+
+The first deliverable is **floor detection**, with four interchangeable algorithms behind a single message type so we can A/B them against the same data.
+
+### `cart_elevator_msgs` — shared message types
+
+- `TagDetection.msg` — one AprilTag from the Limelight (`tid`, `ta`, `tx`, `ty`, `targetpose_robotspace`). Republished into ROS by `nt_bridge`, consumed by anything that needs tags.
+- `FloorEstimate.msg` — `{floor, confidence, source, moving, direction}`. All four floor detectors emit this type, so the fusion node and downstream consumers treat them interchangeably.
+
+`ament_cmake` package (msgs must be C++/CMake even when consumed from Python).
+
+### `nt_bridge` Limelight extension
+
+Added a fourth flow:
+
+```
+NT  limelight/{tv,tid,tx,ty,ta,targetpose_robotspace}
+  -> ROS2  cart_elevator_msgs/TagDetection  on  /limelight/tag
+```
+
+Subscribes via `pyntcore` to the Limelight default table, downsamples to `tag_publish_rate` (default 20 Hz — Limelight runs ~90 FPS, no consumer needs that), and converts the `[x, y, z, pitch_deg, yaw_deg, roll_deg]` array Limelight publishes into a proper `geometry_msgs/Pose`. When no tag is visible (`tv != 1`) it publishes `tag_id = -1` so consumers can still see liveness.
+
+New params (all in `config/nt_bridge.yaml`): `enable_limelight_in`, `tag_topic`, `nt_limelight_table`, `tag_publish_rate`, `tag_frame_id`. Toggle off cleanly by setting `enable_limelight_in: false`.
+
+Per [project-perception-arch], the Pi never runs `apriltag_ros` itself — the Limelight does all detection, the bridge just forwards.
+
+### `cart_elevator` — floor detection
+
+```
+cart_elevator/
+├── cart_elevator/
+│   ├── floor/
+│   │   ├── floor_v1_apriltag.py    # tag id -> floor number, high confidence
+│   │   ├── floor_v2_time.py        # detect motion start/stop, count floors by elapsed time
+│   │   ├── floor_v3_accel.py       # detect motion, integrate accel twice for distance
+│   │   └── floor_v4_fusion.py      # priority+freshness fusion of v1/v2/v3
+│   └── test_helpers/
+│       ├── fake_imu.py             # synthetic /imu with scripted elevator trips
+│       └── fake_tag.py             # synthetic /limelight/tag with scripted tag visibility
+├── config/floor.yaml               # one YAML, all four detectors + the two fakes
+└── launch/floor_blind_test.launch.py
+```
+
+All four detectors publish `cart_elevator_msgs/FloorEstimate` on their own topic (`/elevator/floor_v1_apriltag`, `…v2_time`, `…v3_accel`); the fusion node consumes those and emits the canonical `/elevator/floor`.
+
+#### Algorithm summary
+
+| Detector | Inputs | How it decides | Confidence |
+|---|---|---|---|
+| v1 AprilTag | `/limelight/tag` | Tag id − `floor_tag_id_offset` (default 100) = floor number; confidence scaled by tag area. Ground truth when visible. | 0.70 – 0.95 |
+| v2 Time | `/imu` | Watch accel_z deviation to detect motion start/stop; integrate (elevator_speed × elapsed) to count floors. | ~0.60 |
+| v3 Accel | `/imu` | Estimate gravity bias when idle, integrate (a − g_bias) twice for distance, snap to nearest `floor_height_m`. | ~0.40 |
+| v4 Fusion | the three above | Priority + freshness: tag if fresh, else time, else accel, else last-known with decaying confidence. Not a Kalman filter — explainable on a science-fair poster. | inherits / decays |
+
+#### Test helpers (no robot required)
+
+- `fake_elevator_imu` synthesizes a `/imu` stream with scripted elevator trips. Scenario string is a comma-separated list like `"+3,p5,-1"` — `+3` = up 3 floors, `p5` = 5-second pause, `-1` = down 1 floor. Models accel/cruise/decel/idle phases at `accel_mss = 1.0 m/s²` by default; adds Gaussian noise and an optional constant bias so v3 actually has to estimate the bias.
+- `fake_tag_publisher` publishes a scripted `/limelight/tag` stream. Scenario string is `"<t>:<tag_id>:<area>; ..."` — at `t=2s` show tag 101 at area 0.04, at `t=8s` switch to tag 103, etc. Between entries it publishes `tag_id = -1` so it looks like the Limelight when no tag is in view.
+
+#### Blind-test launch
+
+```bash
+ros2 launch cart_elevator floor_blind_test.launch.py
+# or override the scripted trips:
+ros2 launch cart_elevator floor_blind_test.launch.py imu_scenario:='+2,p10,-2' \
+    tag_scenario:='2:101:0.04; 16:103:0.05'
+```
+
+Brings up both fakes + all four detectors. Open Foxglove or use `ros2 topic echo` on the five `/elevator/...` topics to compare detectors against identical synthetic input. This is the rig we'll use to tune confidences and thresholds before the cart exists; the same detectors run against real `/imu` and `/limelight/tag` later by simply not launching the fakes.
+
+#### Unit tests
+
+`test/test_floor_logic.py` directly calls the four detectors' callbacks with crafted messages and asserts internal state — no spinning executor, no network. Run with:
+
+```bash
+cd ~/ros2_ws && colcon test --packages-select cart_elevator
+colcon test-result --verbose
+```
+
+### Where to retune for the real elevator
+
+| File | Field | When |
+|---|---|---|
+| `config/floor.yaml` → `floor_v2_time` | `elevator_speed_m_s`, `floor_height_m` | Time one trip in the actual building |
+| `config/floor.yaml` → `floor_v3_accel` | `floor_height_m`, `bias_window_s` | Same trip; verify gravity bias settles within bias window |
+| `config/floor.yaml` → `floor_v1_apriltag` | `floor_tag_id_offset` | Decide tag-id ↔ floor-number convention in the building |
+| `config/floor.yaml` → `floor_v4_fusion` | `*_max_age_s` | After observing real detector cadences |
+
+---
+
 ## What's next
 
-- [ ] Plug in real chassis / mount dimensions (update xacro properties)
-- [ ] Test `nt_bridge` against the RoboRIO (or a sim NT server)
-- [ ] First mapping run with `slam_toolbox` once the robot can move
-- [ ] Tune MPPI critics against measured top speed / accel
-- [ ] D455-based obstacle layer for small / moving / low-profile obstacles
+**No robot needed (do these now):**
+
+- [ ] **Direction-arrow recognizer** for the elevator's animated display. ROI + frame-differencing or sparse optical flow. Outputs `cart_elevator_msgs/ElevatorDirection {direction, confidence}`. Test with recorded video.
+- [ ] **Door-state detector**: open / closing / closed via depth-image variance or a simple AprilTag-on-door trick. Same shape as floor detection — multiple algorithms behind one message type, blind-test launch.
+- [ ] **Safe-to-enter gate**: combine door-state + free-space inside the car (D455 depth crop) + floor confidence into one boolean `/elevator/safe_to_enter`.
+- [ ] **Elevator BT node**: a Nav2 BT plugin (or standalone state machine) that sequences `approach → wait for door → enter → ride → exit`. Drive it against the fake_* helpers extended with door + arrow scenarios.
+- [ ] **Docking controller**: P-controller from `/limelight/tag` → `/cmd_vel` for final-cm alignment to a tag. Closed-loop test with `fake_tag_publisher` + an odom integrator.
+- [ ] **Recorded-bag tests for floor stack**: record one real elevator trip on a phone IMU app or any IMU we can borrow, replay through v2/v3 to validate before the cart is built.
+- [ ] **End-to-end blind-test assertion**: extend `test/test_floor_logic.py` (or add `test/test_blind_e2e.py`) so it spawns the blind-test launch in a subprocess, lets it run for ~20 s with a known scenario, and asserts `/elevator/floor` settled on the expected floor.
+
+**Needs the robot / RoboRIO (defer):**
+
+- [ ] Plug in real chassis / mount dimensions (update xacro properties).
+- [ ] Test `nt_bridge` against the RoboRIO (or a sim NT server).
+- [ ] First mapping run with `slam_toolbox` once the robot can move.
+- [ ] Tune MPPI critics against measured top speed / accel.
+- [ ] D455-based obstacle layer for small / moving / low-profile obstacles.
