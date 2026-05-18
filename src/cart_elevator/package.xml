@@ -12,6 +12,9 @@
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>cart_elevator_msgs</depend>
+  <depend>python3-numpy</depend>
+  <!-- python3-opencv used by direction_v1/v2 once the algorithms are filled in -->
+  <depend>python3-opencv</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

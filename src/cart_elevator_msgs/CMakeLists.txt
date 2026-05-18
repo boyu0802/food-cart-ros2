@@ -9,6 +9,7 @@ find_package(geometry_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   msg/TagDetection.msg
   msg/FloorEstimate.msg
+  msg/ElevatorDirection.msg
   DEPENDENCIES std_msgs geometry_msgs
 )
 
