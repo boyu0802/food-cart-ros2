@@ -12,11 +12,15 @@ This doc is everything we've set up so far on the Orange Pi, the quirks we hit, 
 |---|---|
 | Compute | Orange Pi 5, Ubuntu 24.04 aarch64, kernel `6.1.0-1025-rockchip` |
 | Drivetrain | FRC swerve on RoboRIO (separate controller) |
-| Camera | Intel RealSense D455 (depth + RGB) |
+| Floor / obstacle camera | Intel RealSense D455 (depth + RGB), planned to be mounted **angled downward** so it sees obstacles on the floor (people's feet, skateboards, curbs). Because it points down, it cannot also be the camera that watches the elevator hall display. |
+| Elevator-display camera | **TBD — likely a separate USB color webcam** mounted higher up, pointed forward/up at the elevator panel. The digit-tracking detector only needs RGB (no depth), so any cheap color webcam that ROS can read via `usb_cam` / `v4l2_camera` should work. The current code reads from the generic `/image` topic, so it doesn't care which physical device produces the frames. |
 | LiDAR | Slamtec C1 |
+| AprilTag perception | Limelight (does all AprilTag detection at ~90 FPS; Pi consumes detections via NT bridge) |
 | Network | Pi at `192.168.31.114` on `end1` |
 
 User on Pi: `ros2`. Workspace: `~/ros2_ws`.
+
+**On cameras:** at the start of the project we assumed one D455 would do everything. After thinking about mount angles, we don't think that's workable: the obstacle-avoidance use case wants the depth camera pointed *down* at the floor, and the elevator-panel use case wants a camera pointed *up and forward* at the wall display. Two cameras (D455 looking down + a cheap RGB webcam looking up) is the current plan, and is what the elevator-direction code is written against (any color image stream on `/image`). This is not finalised — see "What's next" if we ever revisit the single-camera idea.
 
 ---
 
@@ -358,6 +362,157 @@ cd ~/ros2_ws && colcon test --packages-select cart_elevator
 colcon test-result --verbose
 ```
 
+### Elevator-direction detection — digit-tracking pipeline (2026-05-16, working)
+
+> **Status:** primary detector implemented and verified end-to-end against a recorded phone video of floors 1→4. Optical-flow fallback deliberately deferred. Not yet tested against the real building's elevator with the real camera mounted on the cart.
+
+#### Motivation
+
+To autonomously ride an elevator, the cart needs to answer two related questions every frame:
+
+1. **Which floor are we currently on?** — used to know when to exit the car.
+2. **Is the car moving, and in which direction?** — used to know we boarded the right elevator, and as a sanity check against the IMU-based floor stack.
+
+A wall-mounted LED display in the elevator car answers both questions simultaneously: it shows a big floor digit (1, 2, 3, …) and an animated up/down arrow above it. We had originally planned to read the *arrow* (since direction is what `cart_elevator_msgs/ElevatorDirection` carries), but on reviewing a phone video of the real display we realised the digit is a much better signal:
+
+- The digit is large, high-contrast, and present every frame — the arrow is animated, so any single frame may catch it mid-blink.
+- Reading the digit gives us the absolute floor number **for free**, which the arrow can't.
+- Digit recognition with a 4-template IoU match is trivially fast (microseconds per frame) and needs zero training data — we bootstrap the templates from the video itself.
+
+So the v1 detector watches the **digit**, not the arrow. The arrow-based optical-flow detector (v2) is kept as a scaffold for very short hops where the digit might not change before the doors open, but we've decided to only implement it if measurements prove it's needed.
+
+#### Pipeline (per frame)
+
+Implemented in [`cart_elevator/direction/digit_match.py`](../src/cart_elevator/cart_elevator/direction/digit_match.py) — all four steps are pure functions so they can be unit-tested and reused by future tools (a `floor_v5_display` detector would call the same helpers).
+
+```
+   raw BGR frame
+        │
+        ▼
+   find_housing(bgr) ────────► (x, y, w, h) of the dark display panel
+        │                      (largest dark, vertically-elongated region
+        │                       that contains warm-bright LED pixels)
+        ▼
+   warm_mask(bgr)  ───────────► binary mask of lit amber / red LEDs
+        │                      (two HSV ranges around hue=0 to cover the
+        │                       full red→amber wrap-around)
+        ▼
+   extract_digit(mask, housing) ──► 32×48 normalized binary crop of the
+        │                          digit alone. Picks the largest lit
+        │                          connected component whose centroid is
+        │                          in the LOWER HALF of the housing — the
+        │                          arrow lives in the upper half and is
+        │                          deliberately discarded.
+        ▼
+   classify_digit(crop, templates) ──► (digit, IoU_score, margin)
+                                     IoU vs each digit_<N>.png template,
+                                     return the best plus the gap to the
+                                     runner-up (margin). Both must clear
+                                     thresholds (default score≥0.45,
+                                     margin≥0.05) to be trusted.
+```
+
+The numeric tuning constants (`HOUSING_*`, HSV ranges, `MIN_DIGIT_AREA`) are module-level constants at the top of `digit_match.py`. They are tuned for the lighting + camera angle of the recorded phone clip; **expect to re-tune them when the real elevator-display camera is mounted on the cart**, especially HSV thresholds (different webcam = different white balance) and the housing size constraints (different mount distance = different bbox size on the image).
+
+#### The detector node — `direction_v1_digit`
+
+Lives in [`cart_elevator/direction/direction_v1_digit.py`](../src/cart_elevator/cart_elevator/direction/direction_v1_digit.py). Subscribes to `/image`, runs the pipeline above on every frame, and maintains a sliding 5-second window of confident digit observations. Each timer tick (10 Hz) it classifies the current direction from the window:
+
+| Window contents | Reported direction | Confidence |
+|---|---|---|
+| All observations are the same digit | `IDLE` | 0.75 |
+| Last digit > first digit (and not equal) | `UP` | 0.55 + 0.10 × obs, capped 0.95 |
+| Last digit < first digit | `DOWN` | 0.55 + 0.10 × obs, capped 0.95 |
+| Endpoints equal but window is non-uniform (went up then back) | `UNKNOWN` | 0.0 |
+| Fewer than 2 observations | `UNKNOWN` | 0.0 |
+
+Confidence grows with the number of observations — a single 1→2 transition is much weaker evidence than 1→2→3→4. The confidence ceiling of 0.95 is so v3_fusion can still prefer a corroborating signal if one shows up.
+
+**Known weirdness: the loop-back wraparound.** Our recorded clip loops 1→2→3→4→(rewind)→1→2…. When the file rewinds, the detector sees a 4→1 transition, which is "decreasing", which it reports as `DOWN` with high confidence. That is *correct* given what it sees — don't be fooled by it during testing into thinking the detector is broken. On real hardware this never happens; the video-replay loop is the only context where it occurs.
+
+#### The fusion node — `direction_v3_fusion`
+
+Unchanged from the original scaffold. Takes `/elevator/direction_v1_digit` and `/elevator/direction_v2_flow` (currently always UNKNOWN) and emits `/elevator/direction` with this policy:
+
+- Both fresh + agree → that direction, confidence = max(v1, v2)
+- Both fresh + disagree → `UNKNOWN`, confidence = 0.5 × min(v1, v2)
+- Only one fresh → pass through with confidence -= 0.1
+- Neither fresh → `UNKNOWN`, 0.0
+
+Freshness window is `max_age_s: 1.0` from the YAML.
+
+Because v2 is currently a placeholder that never reports anything other than `UNKNOWN`, fusion is effectively a v1 pass-through with a 0.1 confidence haircut. That's fine — the API is in place for when v2 comes online.
+
+#### Test rig — video replay + live debug overlay
+
+Two new test helpers, both runnable without any cart hardware:
+
+1. **`video_replay`** ([`test_helpers/video_replay.py`](../src/cart_elevator/cart_elevator/test_helpers/video_replay.py)) — opens an mp4 with OpenCV's VideoCapture, publishes each frame as `sensor_msgs/Image` (rgb8) on `/image` at the file's native framerate, and rewinds to frame 0 on EOF (configurable). This is our deterministic fixture: every run sees the exact same input, so detector behavior is reproducible.
+
+2. **`direction_debug_view`** ([`test_helpers/direction_debug_view.py`](../src/cart_elevator/cart_elevator/test_helpers/direction_debug_view.py)) — pops an OpenCV `imshow` window that draws, on top of each replayed frame:
+   - The detected housing bounding box (green)
+   - A 6×-zoomed view of the extracted digit crop, top-right
+   - Top-left: per-frame digit, IoU score, margin — green if confident, yellow if rejected
+   - A short rolling history strip of recent classifications
+   - Bottom-left: the currently-published direction + confidence bar, colored by direction (green UP, red DOWN, gray IDLE, yellow UNKNOWN)
+
+This is the panel you actually watch to know the pipeline is working — text logs alone won't tell you whether `find_housing` picked the right bbox.
+
+#### Procedure: how to reproduce the verification
+
+1. **Build the workspace** (only needed after pulling fresh code or editing setup.py):
+   ```bash
+   cd ~/ros2_ws && colcon build --symlink-install --packages-select cart_elevator cart_elevator_msgs
+   source ~/ros2_ws/install/setup.bash
+   ```
+2. **Run the video-driven test launch**:
+   ```bash
+   ros2 launch cart_elevator direction_video_test.launch.py
+   ```
+   This starts four nodes: `video_replay` (publishing `test/data/elevator_1_to_4_up.mp4` on `/image`), `direction_v1_digit`, `direction_v3_fusion`, and `direction_debug_view`.
+3. **Watch the OpenCV window.** Expect: the green housing bbox locks onto the display almost immediately; the extracted-digit zoom in the top-right shows recognisable shapes of 1, 2, 3, 4 as the elevator ascends; the bottom-left direction label sits on `UP` with confidence climbing from 0.55 toward 0.95 as more observations accumulate; at the loop point (when the mp4 rewinds) it briefly flips to `DOWN` then back to `UP`.
+4. **Inspect the topic** with `ros2 topic echo --no-arr /elevator/direction_v1_digit`. You should see ~10 Hz messages with `direction: 1` (UP), `confidence ≈ 0.95`, `source: 1` (DIGIT_TRACK).
+5. **To run without the GUI** (e.g. over SSH):
+   ```bash
+   ros2 launch cart_elevator direction_video_test.launch.py show:=false
+   ```
+
+#### Templates and the bootstrap script
+
+The four digit templates live at `src/cart_elevator/data/digit_templates/digit_{1,2,3,4}.png` (32×48 binary PNGs). They were generated by scanning through the recorded phone video, running the housing + warm-mask + extract pipeline, and saving the first clean crop of each digit. The bootstrap script that did this work was prototyped at `/tmp/bootstrap_digit_templates.py` and **was not committed** — it's listed under "What's next" because we'll need it again when we add floors outside 1–4 or re-shoot the templates from the cart-mounted camera.
+
+#### Why we deleted `direction_v1_framediff.py`
+
+The original v1 was a generic frame-differencing approach: look at the arrow ROI, watch which pixels light up, decide UP vs DOWN from the centroid trend. After looking at real frames it became clear (a) the arrow animation is complex enough that a single still can land on a near-empty phase that's ambiguous, and (b) tracking the digit is strictly more informative because it also yields the floor number. We replaced framediff with digit-tracking and renamed the source constant in `ElevatorDirection.msg` from `SOURCE_FRAMEDIFF` to `SOURCE_DIGIT_TRACK` (kept at numeric value 1 so wire-compat doesn't matter).
+
+#### The arrow-flow detector (`direction_v2_flow`) is still a scaffold
+
+This is intentional. The plan agreed on 2026-05-16 is: only fill it in if digit-tracking proves insufficient — specifically if there's a real-elevator scenario where the doors open before the digit has time to change (a "short hop" between adjacent floors at a fast elevator). On the recorded clip, digit changes are visible ~1.5 s into each leg, well before a typical door-open event, so the fallback may never be needed. If we do implement it, the existing scaffold already has the topic plumbing and YAML params wired up.
+
+#### Files at a glance
+
+```
+src/cart_elevator/
+├── cart_elevator/direction/
+│   ├── direction_v1_digit.py        # PRIMARY detector
+│   ├── direction_v2_flow.py         # PLACEHOLDER fallback
+│   ├── direction_v3_fusion.py       # fuses v1 + v2
+│   └── digit_match.py               # find_housing / warm_mask / extract_digit / classify_digit / load_templates
+├── cart_elevator/test_helpers/
+│   ├── video_replay.py              # mp4 → /image
+│   ├── direction_debug_view.py      # cv2.imshow live overlay
+│   └── fake_direction_image.py      # synthetic marching-block (used by direction_blind_test)
+├── data/digit_templates/
+│   └── digit_{1,2,3,4}.png          # 32×48 binary IoU templates
+├── test/data/
+│   └── elevator_1_to_4_up.mp4       # 3.4 MB phone capture, floors 1→4 ascending
+└── launch/
+    ├── direction_video_test.launch.py  # video_replay + v1 + v3 + debug overlay
+    └── direction_blind_test.launch.py  # synthetic image + v2 + v3 (plumbing only)
+```
+
+Dependencies added to `cart_elevator/package.xml`: `python3-numpy`, `python3-opencv`.
+
 ### Where to retune for the real elevator
 
 | File | Field | When |
@@ -366,20 +521,42 @@ colcon test-result --verbose
 | `config/floor.yaml` → `floor_v3_accel` | `floor_height_m`, `bias_window_s` | Same trip; verify gravity bias settles within bias window |
 | `config/floor.yaml` → `floor_v1_apriltag` | `floor_tag_id_offset` | Decide tag-id ↔ floor-number convention in the building |
 | `config/floor.yaml` → `floor_v4_fusion` | `*_max_age_s` | After observing real detector cadences |
+| `cart_elevator/direction/digit_match.py` | `HOUSING_*` constants, HSV ranges | Once the elevator-display camera is mounted on the cart and we see how the real display looks at the real distance + lighting |
+| `data/digit_templates/digit_*.png` | the template images themselves | Re-bootstrap from a clip taken with the cart-mounted camera, not the phone. Phone-shot templates may not generalise to a different camera's pixel response |
+| `config/floor.yaml` → `direction_v1_digit` | `min_score`, `min_margin`, `history_window_s` | After capturing more clips (up trip, down trip, idle, off-spec floors) and seeing where false-rejects vs false-accepts live |
 
 ---
 
 ## What's next
 
+**Done since the last entry** (2026-05-18, brought current):
+
+- [x] **Direction detector — digit-tracking** (`direction_v1_digit`) — implemented and verified against recorded video. See "Elevator-direction detection" above for full procedure. Optical-flow fallback (`direction_v2_flow`) intentionally deferred until measurements prove it's needed.
+
 **No robot needed (do these now):**
 
-- [ ] **Direction-arrow recognizer** for the elevator's animated display. ROI + frame-differencing or sparse optical flow. Outputs `cart_elevator_msgs/ElevatorDirection {direction, confidence}`. Test with recorded video.
-- [ ] **Door-state detector**: open / closing / closed via depth-image variance or a simple AprilTag-on-door trick. Same shape as floor detection — multiple algorithms behind one message type, blind-test launch.
-- [ ] **Safe-to-enter gate**: combine door-state + free-space inside the car (D455 depth crop) + floor confidence into one boolean `/elevator/safe_to_enter`.
-- [ ] **Elevator BT node**: a Nav2 BT plugin (or standalone state machine) that sequences `approach → wait for door → enter → ride → exit`. Drive it against the fake_* helpers extended with door + arrow scenarios.
-- [ ] **Docking controller**: P-controller from `/limelight/tag` → `/cmd_vel` for final-cm alignment to a tag. Closed-loop test with `fake_tag_publisher` + an odom integrator.
-- [ ] **Recorded-bag tests for floor stack**: record one real elevator trip on a phone IMU app or any IMU we can borrow, replay through v2/v3 to validate before the cart is built.
+- [ ] **AprilTag alignment / final-approach docking controller — NOT STARTED.** This is the biggest open piece on the elevator side. The Limelight publishes `targetpose_robotspace` for any visible tag (a `geometry_msgs/Pose`), and `nt_bridge` already republishes that as `cart_elevator_msgs/TagDetection` on `/limelight/tag`. What we still need to build:
+  - A docking node that subscribes to `/limelight/tag`, picks the target tag by id (e.g. an in-car tag near the door, or a tag on the hallway wall outside the elevator), and emits `geometry_msgs/Twist` on `cmd_vel` to drive the cart to a target offset pose relative to that tag.
+  - A simple controller: probably proportional on lateral error (tag_x), longitudinal error (tag_z minus desired stand-off), and yaw error (tag yaw). Start with three independent P loops, only add I/D if the simulator (next bullet) shows offset bias.
+  - A closed-loop simulator for the controller: extend `fake_tag_publisher` so the tag pose responds to commanded `cmd_vel` (integrate position over time), letting us tune gains without the cart.
+  - Define the "I'm docked" termination condition (within X cm laterally, Y cm longitudinally, Z degrees in yaw — pick values that match the elevator door's clear width).
+  - Open question: does docking happen *before* boarding (align in the hallway to enter cleanly) or *inside* the car (align with an in-car tag to be at a known pose for exit)? Probably both — same controller, different target tag id.
+- [ ] **Door-state detector** (open / closing / closed). Most likely option: D455 depth-crop of the door region — when the door is open, the average depth in that crop jumps from "wall distance" to "inside-car distance". Same shape as floor detection: multiple algorithms behind one message type, blind-test launch.
+- [ ] **Safe-to-enter gate**: AND together `door == open`, free-space inside the car (D455 depth, after the elevator-display camera has confirmed `direction == IDLE` and floor matches target), and direction confidence. One boolean `/elevator/safe_to_enter`.
+- [ ] **Elevator BT (behaviour tree) node**: sequences `approach hallway tag → press call button (manual for now) → wait for door → wait for IDLE+correct floor → align to in-car tag → enter → wait for door close + ride → wait for IDLE+target floor → align to door tag → exit`. Drive it against the fake helpers (extended with door + arrow scenarios) before any real cart hardware exists.
+- [ ] **More elevator-display fixtures** (waiting on you to capture from a phone):
+  - `elevator_4_to_1_down.mp4` — descending trip so we can validate DOWN without relying on the loop-rewind artefact.
+  - `elevator_idle_floor*.mp4` — ~15 s of a stationary display so we can validate IDLE.
+  - A clip that exposes digits outside 1–4 (e.g. a building with floors 0, B1, 5+) — so we can extend the template set.
+- [ ] **Restore digit-template bootstrap script in-repo.** Currently only existed at `/tmp/bootstrap_digit_templates.py`, which is gone. Re-create at `src/cart_elevator/scripts/bootstrap_digit_templates.py`; it should accept a video path and floor-range bins and write `data/digit_templates/digit_<N>.png`.
+- [ ] **Recorded-bag tests for floor stack**: record one real elevator trip on a phone IMU app, replay through v2/v3 to validate before the cart is built.
 - [ ] **End-to-end blind-test assertion**: extend `test/test_floor_logic.py` (or add `test/test_blind_e2e.py`) so it spawns the blind-test launch in a subprocess, lets it run for ~20 s with a known scenario, and asserts `/elevator/floor` settled on the expected floor.
+- [ ] **`floor_v5_display` detector**: a fifth floor estimator that reuses `digit_match.py` to read the absolute floor from the elevator-display camera. Same code we already wrote — gives us a high-confidence floor signal without an AprilTag.
+
+**Camera / mounting decisions (decide before cart assembly):**
+
+- [ ] **Confirm the elevator-display camera.** Current plan: separate USB webcam pointed forward/up, distinct from the D455 (which will look down for floor obstacles). Pick the actual webcam model, confirm it works with `usb_cam`/`v4l2_camera` on the rockchip kernel, mount-test against the in-car display from a realistic cart-height position.
+- [ ] **Re-shoot digit templates from the chosen webcam** once mounted. Phone-shot templates may not survive a sensor change.
 
 **Needs the robot / RoboRIO (defer):**
 
@@ -387,4 +564,4 @@ colcon test-result --verbose
 - [ ] Test `nt_bridge` against the RoboRIO (or a sim NT server).
 - [ ] First mapping run with `slam_toolbox` once the robot can move.
 - [ ] Tune MPPI critics against measured top speed / accel.
-- [ ] D455-based obstacle layer for small / moving / low-profile obstacles.
+- [ ] D455-based obstacle layer for small / moving / low-profile obstacles — this is *also* the obstacle-avoidance use case that drove the "D455 looks down" mounting decision in the Hardware table.

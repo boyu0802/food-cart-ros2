@@ -12,6 +12,10 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.py')),
         ('share/' + package_name + '/config', glob('config/*.yaml')),
+        ('share/' + package_name + '/data/digit_templates',
+         glob('data/digit_templates/*.png')),
+        ('share/' + package_name + '/test/data',
+         glob('test/data/*.mp4')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -27,9 +31,16 @@ setup(
             'floor_v2_time = cart_elevator.floor.floor_v2_time:main',
             'floor_v3_accel = cart_elevator.floor.floor_v3_accel:main',
             'floor_v4_fusion = cart_elevator.floor.floor_v4_fusion:main',
+            # Direction detectors
+            'direction_v1_digit = cart_elevator.direction.direction_v1_digit:main',
+            'direction_v2_flow = cart_elevator.direction.direction_v2_flow:main',
+            'direction_v3_fusion = cart_elevator.direction.direction_v3_fusion:main',
             # Test helpers
             'fake_tag_publisher = cart_elevator.test_helpers.fake_tag:main',
             'fake_elevator_imu = cart_elevator.test_helpers.fake_imu:main',
+            'fake_direction_image = cart_elevator.test_helpers.fake_direction_image:main',
+            'video_replay = cart_elevator.test_helpers.video_replay:main',
+            'direction_debug_view = cart_elevator.test_helpers.direction_debug_view:main',
         ],
     },
 )
