@@ -1,0 +1,50 @@
+###############################################################################
+# Mission config for the lunch-delivery demo.
+#
+# All tag IDs + Nav2 poses are PLACEHOLDERS — fill in once tags are
+# mounted and we've driven the cart to each pose to record (x, y, yaw).
+###############################################################################
+
+cart_supervisor:
+  ros__parameters:
+    tick_rate_hz: 5.0
+    target_floor: 4
+
+    # Tag IDs — distinct from floor-detector tags (which live at 100+offset).
+    pickup_tag_id: 200
+    hallway_panel_tag_id: 210
+    in_cab_panel_tag_id: 220
+    dropoff_tag_id: 230
+
+    # Standoff + deadband per dock target. Tighter deadbands for
+    # button-press alignment (the pneumatic needs the cart in the right
+    # spot to land on the button); looser for nav-style dock so we
+    # don't oscillate.
+    pickup_standoff_x: 0.60
+    pickup_standoff_y: 0.00
+    pickup_facing_yaw: 3.14159265
+    pickup_dead_x: 0.03
+    pickup_dead_y: 0.03
+    pickup_dead_yaw: 0.05
+
+    panel_standoff_x: 0.35
+    panel_standoff_y: 0.00
+    panel_facing_yaw: 3.14159265
+    panel_dead_x: 0.015
+    panel_dead_y: 0.015
+    panel_dead_yaw: 0.025
+
+    dropoff_standoff_x: 0.60
+    dropoff_standoff_y: 0.00
+    dropoff_facing_yaw: 3.14159265
+    dropoff_dead_x: 0.03
+    dropoff_dead_y: 0.03
+    dropoff_dead_yaw: 0.05
+
+    # Nav2 approach poses (frame_id, x, y, yaw). All "map"-frame.
+    # Replace once each pose is recorded on the actual building map.
+    pickup_pose: [0.0, 0.0, 0.0]
+    hallway_pose: [0.0, 0.0, 0.0]
+    into_cab_pose: [0.0, 0.0, 0.0]
+    out_of_cab_pose: [0.0, 0.0, 0.0]
+    dropoff_pose: [0.0, 0.0, 0.0]
