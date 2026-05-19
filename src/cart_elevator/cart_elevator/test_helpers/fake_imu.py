@@ -26,6 +26,7 @@ import time
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
+from cart_elevator_msgs.msg import FloorEstimate
 
 
 GRAVITY = 9.81
@@ -48,6 +49,10 @@ class FakeElevatorImu(Node):
             ('bias_mss', 0.0),
             ('scenario', '+3'),  # default: up 3 floors
             ('loop', False),
+            # Ground-truth floor publisher (drives experiment-runner error metrics).
+            ('starting_floor', 1),
+            ('ground_truth_topic', '/ground_truth/floor'),
+            ('ground_truth_rate_hz', 10.0),
         ])
         gp = lambda n: self.get_parameter(n).value
 
@@ -62,14 +67,21 @@ class FakeElevatorImu(Node):
         self.bias = float(gp('bias_mss'))
         self.loop = bool(gp('loop'))
 
+        self.starting_floor = int(gp('starting_floor'))
+
         self.pub = self.create_publisher(Imu, gp('imu_topic'), 50)
+        self.gt_pub = self.create_publisher(
+            FloorEstimate, gp('ground_truth_topic'), 10)
         self.schedule = self._build_schedule(gp('scenario'))
+        self.floor_timeline = self._build_floor_timeline(gp('scenario'))
         self.dt = 1.0 / self.rate
         self.t = 0.0
         self.create_timer(self.dt, self._tick)
+        self.create_timer(1.0 / float(gp('ground_truth_rate_hz')), self._publish_gt)
         self.get_logger().info(
             f'fake_elevator_imu: scenario={gp("scenario")}, '
-            f'total={self.schedule[-1][0]:.1f}s')
+            f'total={self.schedule[-1][0]:.1f}s, '
+            f'final floor={self.floor_timeline[-1][1]}')
 
     def _build_schedule(self, scenario: str):
         """Return list of (end_time, accel_z) keyframes.
@@ -127,11 +139,68 @@ class FakeElevatorImu(Node):
         schedule.append((t, 0.0))
         return schedule
 
+    def _build_floor_timeline(self, scenario: str):
+        """Parallel timeline of (end_time, floor, moving, direction) keyframes.
+
+        Convention: ground-truth floor only changes at trip END (when DECEL
+        completes). During motion, ground truth still reports the source
+        floor — matches what floor_v2_time does internally.
+        """
+        timeline = []
+        floor = self.starting_floor
+        t = 0.0
+
+        t += self.pre_idle
+        timeline.append((t, floor, False, 0))
+
+        items = [s.strip() for s in scenario.split(',') if s.strip()]
+        first = True
+        for it in items:
+            if not first:
+                t += self.inter_idle
+                timeline.append((t, floor, False, 0))
+            first = False
+
+            if it.startswith('p'):
+                pause_s = float(it[1:])
+                t += pause_s
+                timeline.append((t, floor, False, 0))
+                continue
+
+            sign = +1 if it.startswith('+') else -1
+            n = int(it[1:]) if it[0] in '+-' else int(it)
+            distance = n * self.floor_h
+            t_accel = min(1.5, math.sqrt(abs(distance) / self.a))
+            v_cruise = self.a * t_accel
+            d_accel = 0.5 * self.a * t_accel * t_accel
+            d_cruise = abs(distance) - 2 * d_accel
+            t_cruise = max(0.0, d_cruise / v_cruise)
+
+            t += t_accel
+            timeline.append((t, floor, True, sign))
+            t += t_cruise
+            timeline.append((t, floor, True, sign))
+            t += t_accel
+            # End of DECEL — floor changes here.
+            floor += sign * n
+            timeline.append((t, floor, False, 0))
+
+        t += self.post_idle
+        timeline.append((t, floor, False, 0))
+        return timeline
+
     def _accel_at(self, t: float) -> float:
         for end_t, a in self.schedule:
             if t < end_t:
                 return a
         return 0.0  # past end
+
+    def _floor_state_at(self, t: float):
+        """Return (floor, moving, direction) at simulated time t."""
+        for end_t, floor, moving, direction in self.floor_timeline:
+            if t < end_t:
+                return floor, moving, direction
+        return self.floor_timeline[-1][1:]
 
     def _tick(self) -> None:
         if self.t > self.schedule[-1][0]:
@@ -165,6 +234,18 @@ class FakeElevatorImu(Node):
         msg.orientation_covariance = [LARGE, 0.0, 0.0, 0.0, LARGE, 0.0, 0.0, 0.0, LARGE]
         self.pub.publish(msg)
         self.t += self.dt
+
+    def _publish_gt(self) -> None:
+        floor, moving, direction = self._floor_state_at(self.t)
+        msg = FloorEstimate()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'map'
+        msg.floor = int(floor)
+        msg.confidence = 1.0
+        msg.source = FloorEstimate.SOURCE_UNKNOWN  # 0 — marks "ground truth, not a real detector"
+        msg.moving = bool(moving)
+        msg.direction = int(direction)
+        self.gt_pub.publish(msg)
 
 
 def main(args=None) -> None:
