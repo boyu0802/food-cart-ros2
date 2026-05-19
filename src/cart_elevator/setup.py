@@ -35,10 +35,13 @@ setup(
             'direction_v1_digit = cart_elevator.direction.direction_v1_digit:main',
             'direction_v2_flow = cart_elevator.direction.direction_v2_flow:main',
             'direction_v3_fusion = cart_elevator.direction.direction_v3_fusion:main',
+            # Docking
+            'dock_controller = cart_elevator.dock.dock_controller:main',
             # Test helpers
             'fake_tag_publisher = cart_elevator.test_helpers.fake_tag:main',
             'fake_elevator_imu = cart_elevator.test_helpers.fake_imu:main',
             'fake_direction_image = cart_elevator.test_helpers.fake_direction_image:main',
+            'fake_dock_sim = cart_elevator.test_helpers.fake_dock_sim:main',
             'video_replay = cart_elevator.test_helpers.video_replay:main',
             'direction_debug_view = cart_elevator.test_helpers.direction_debug_view:main',
         ],
