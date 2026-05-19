@@ -10,6 +10,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   msg/TagDetection.msg
   msg/FloorEstimate.msg
   msg/ElevatorDirection.msg
+  msg/DoorState.msg
+  msg/DockStatus.msg
+  srv/SetDockTarget.srv
   DEPENDENCIES std_msgs geometry_msgs
 )
 

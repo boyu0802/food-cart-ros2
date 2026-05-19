@@ -1,0 +1,22 @@
+# Service to retarget dock_controller at runtime.
+#
+# Same controller handles every alignment use case in the mission:
+# kitchen pickup, hallway button-panel, in-cab button-panel, dropoff
+# marker. The supervisor calls this between phases to switch tags
+# (and standoff / deadbands for the few cases where they differ —
+# e.g. button-press alignment may want tighter dead_y than dropoff).
+#
+# enabled=false clears the target; controller publishes zero velocity
+# until re-enabled. Use this while Nav2 owns /cmd_vel.
+
+bool enabled            # false -> stop publishing dock velocities entirely
+int32 tag_id            # AprilTag id to dock to
+float64 standoff_x      # m, tag-in-robot x at dock
+float64 standoff_y      # m, tag-in-robot y at dock
+float64 facing_yaw      # rad, tag yaw at dock; pi = head-on/back-in
+float64 dead_x          # m, position deadband
+float64 dead_y          # m
+float64 dead_yaw        # rad, yaw deadband
+---
+bool ok
+string message          # human-readable status (empty on success)
