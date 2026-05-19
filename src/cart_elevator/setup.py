@@ -41,6 +41,8 @@ setup(
             'door_state_detector = cart_elevator.door.door_state_detector:main',
             # Mission supervisor
             'cart_supervisor = cart_elevator.supervisor.cart_supervisor:main',
+            # Per-floor map swap + AMCL relocalize helper
+            'map_swap_node = cart_elevator.maps.map_swap_node:main',
             # Test helpers
             'fake_tag_publisher = cart_elevator.test_helpers.fake_tag:main',
             'fake_elevator_imu = cart_elevator.test_helpers.fake_imu:main',
