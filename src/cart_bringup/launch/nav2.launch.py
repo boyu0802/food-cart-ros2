@@ -42,16 +42,27 @@ def generate_launch_description():
              name='smoother_server', output='screen', parameters=common_params),
         Node(package='nav2_planner', executable='planner_server',
              name='planner_server', output='screen', parameters=common_params),
+        # behavior_server publishes recovery Twists (spin, backup,
+        # drive_on_heading) on its 'cmd_vel' topic. Route it to a
+        # dedicated channel so twist_mux can arbitrate it — priority
+        # between nav and dock so a recovery overrides normal nav, and
+        # a dock command (when active) still wins over recovery.
         Node(package='nav2_behaviors', executable='behavior_server',
-             name='behavior_server', output='screen', parameters=common_params),
+             name='behavior_server', output='screen', parameters=common_params,
+             remappings=[('cmd_vel', 'cmd_vel_behavior')]),
         Node(package='nav2_bt_navigator', executable='bt_navigator',
              name='bt_navigator', output='screen', parameters=common_params),
         Node(package='nav2_waypoint_follower', executable='waypoint_follower',
              name='waypoint_follower', output='screen', parameters=common_params),
+        # velocity_smoother reads the raw controller output on /cmd_vel_nav
+        # and publishes the smoothed result on /cmd_vel_smooth. It does NOT
+        # write directly to /cmd_vel anymore — twist_mux (in bringup.launch)
+        # arbitrates /cmd_vel_smooth against /dock/cmd_vel and produces the
+        # final /cmd_vel that nt_bridge consumes.
         Node(package='nav2_velocity_smoother', executable='velocity_smoother',
              name='velocity_smoother', output='screen', parameters=common_params,
              remappings=[('cmd_vel', 'cmd_vel_nav'),
-                         ('cmd_vel_smoothed', 'cmd_vel')]),
+                         ('cmd_vel_smoothed', 'cmd_vel_smooth')]),
         Node(
             package='nav2_lifecycle_manager',
             executable='lifecycle_manager',

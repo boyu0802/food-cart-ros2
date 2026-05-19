@@ -1,0 +1,41 @@
+###############################################################################
+# twist_mux arbitration for the cart's /cmd_vel topic.
+#
+# Final /cmd_vel (consumed by nt_bridge) is the priority-weighted multiplex of
+# all sources below. Higher priority wins while it's publishing within its
+# timeout window. Sources that go silent for `timeout` seconds drop out and
+# lower-priority sources take over.
+#
+# Current sources:
+#   - navigation (Nav2 velocity_smoother) -> /cmd_vel_smooth,    priority  10
+#   - recovery   (Nav2 behavior_server)   -> /cmd_vel_behavior,  priority  50
+#   - docking    (dock_controller)        -> /dock/cmd_vel,      priority 100
+#
+# Rationale for priorities:
+#   - Recovery > navigation: spin/backup/drive_on_heading are deliberate
+#     overrides chosen by the BT, they must beat the normal control loop.
+#   - Docking > recovery: a dock command is a user-level goal; we don't
+#     want a stray recovery to yank the cart away from the tag mid-dock.
+#
+# When the highest-priority source goes silent for `timeout` seconds, the
+# next-highest active source takes over automatically.
+###############################################################################
+
+twist_mux:
+  ros__parameters:
+    topics:
+      navigation:
+        topic: /cmd_vel_smooth
+        timeout: 0.5
+        priority: 10
+      recovery:
+        topic: /cmd_vel_behavior
+        timeout: 0.5
+        priority: 50
+      docking:
+        topic: /dock/cmd_vel
+        timeout: 0.5
+        priority: 100
+    # No locks defined yet — add an e-stop lock here once we have a hardware
+    # e-stop button wired to a Bool publisher.
+    locks: {}
