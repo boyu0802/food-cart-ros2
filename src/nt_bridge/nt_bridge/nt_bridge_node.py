@@ -8,18 +8,30 @@ Five flows:
   NT    limelight/{tv,tid,tx,ty,ta,targetpose_robotspace}
                           ->  ROS2 cart_elevator_msgs/TagDetection on /limelight/tag
 
-Mission control (new 2026-05-19):
+Mission control (new 2026-05-19/20):
   ROS2  /elevator/press_button       ->  NT  Pi/elevator/press_button (string)
+  ROS2  /mission/cmd                 ->  NT  Pi/mission/cmd (string,
+                                             "load" | "unload" | "stow")
   NT    Robot/elevator/press_done    ->  ROS2 std_msgs/Bool on /elevator/press_done
   NT    Robot/mission/start_pressed  ->  ROS2 std_msgs/Bool on /mission/start
   NT    Robot/mission/loaded         ->  ROS2 std_msgs/Bool on /mission/loaded
   NT    Robot/mission/unloaded       ->  ROS2 std_msgs/Bool on /mission/unloaded
+  NT    Robot/mission/enable         ->  ROS2 std_msgs/Bool on /mission/enable
+                                         (level — held while operator's hold-to-run
+                                         button is pressed; republished on change)
+  NT    Robot/mission/restart_pressed -> ROS2 std_msgs/Bool on /mission/restart
+                                         (edge — rising edge each restart press)
 
 NT->ROS bools are edge-triggered: we publish Bool(True) the first tick we
 see the NT value go False->True, then nothing until the next rising edge.
 That matches the supervisor's latch semantics — it only cares about "the
 event happened," not the held state. Polling at mission_in_rate_hz; pick
 high enough that a 1-robot-tick (~20 ms) FRC pulse can't slip through.
+
+Exception: `/mission/enable` is level-triggered. We republish it (with
+transient_local QoS so late subscribers get the current value) on every
+False->True or True->False change. The supervisor checks the current
+value at tick time, so it must be a held bool not an edge.
 
 Watchdog: if no /cmd_vel arrives within `cmd_vel_max_age` seconds, the bridge
 publishes (0, 0, 0) to NT so the RoboRIO stops the swerve.
@@ -36,6 +48,7 @@ from geometry_msgs.msg import Twist, TwistStamped, TransformStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
 from std_msgs.msg import Bool, String
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from tf2_ros import TransformBroadcaster
 
 from cart_elevator_msgs.msg import TagDetection
@@ -91,15 +104,21 @@ class NtBridge(Node):
             # Mission-IO NT keys (flat — no shared sub-table) so they
             # show up cleanly in Shuffleboard / OutlineViewer.
             ('press_button_topic', '/elevator/press_button'),
+            ('mission_cmd_topic', '/mission/cmd'),
             ('press_done_topic', '/elevator/press_done'),
             ('mission_start_topic', '/mission/start'),
             ('mission_loaded_topic', '/mission/loaded'),
             ('mission_unloaded_topic', '/mission/unloaded'),
+            ('mission_enable_topic', '/mission/enable'),
+            ('mission_restart_topic', '/mission/restart'),
             ('nt_press_button_key', 'Pi/elevator/press_button'),
+            ('nt_mission_cmd_key', 'Pi/mission/cmd'),
             ('nt_press_done_key', 'Robot/elevator/press_done'),
             ('nt_mission_start_key', 'Robot/mission/start_pressed'),
             ('nt_mission_loaded_key', 'Robot/mission/loaded'),
             ('nt_mission_unloaded_key', 'Robot/mission/unloaded'),
+            ('nt_mission_enable_key', 'Robot/mission/enable'),
+            ('nt_mission_restart_key', 'Robot/mission/restart_pressed'),
             ('mission_in_rate_hz', 20.0),
             ('odom_publish_rate', 50.0),
             ('imu_publish_rate', 100.0),
@@ -205,6 +224,16 @@ class NtBridge(Node):
                 String, gp('press_button_topic'),
                 self._on_press_button, 5)
 
+            # Pi -> NT: mission_cmd. Separate string topic so the
+            # lift+pusher mechanism can run in parallel with the
+            # pneumatic-press path on the Rio side.
+            self._mission_cmd_pub = self._nt.getStringTopic(
+                gp('nt_mission_cmd_key')).publish()
+            self._mission_cmd_pub.set('')
+            self.create_subscription(
+                String, gp('mission_cmd_topic'),
+                self._on_mission_cmd, 5)
+
             # NT -> Pi: edge-triggered bools. We subscribe with a sentinel
             # of False so the first reading is well-defined; track the
             # previous value to detect rising edges.
@@ -216,11 +245,18 @@ class NtBridge(Node):
                 gp('nt_mission_loaded_key')).subscribe(False)
             self._sub_mission_unloaded = self._nt.getBooleanTopic(
                 gp('nt_mission_unloaded_key')).subscribe(False)
+            # Hold-to-run dead-man (level) + restart edge.
+            self._sub_mission_enable = self._nt.getBooleanTopic(
+                gp('nt_mission_enable_key')).subscribe(False)
+            self._sub_mission_restart = self._nt.getBooleanTopic(
+                gp('nt_mission_restart_key')).subscribe(False)
 
             self._prev_press_done = False
             self._prev_mission_start = False
             self._prev_mission_loaded = False
             self._prev_mission_unloaded = False
+            self._prev_mission_enable = False
+            self._prev_mission_restart = False
 
             self._pub_press_done = self.create_publisher(
                 Bool, gp('press_done_topic'), 5)
@@ -230,6 +266,22 @@ class NtBridge(Node):
                 Bool, gp('mission_loaded_topic'), 5)
             self._pub_mission_unloaded = self.create_publisher(
                 Bool, gp('mission_unloaded_topic'), 5)
+            # Latched QoS for the enable bool — supervisor needs to
+            # know the current value when it starts up, not wait for
+            # the next change.
+            enable_qos = QoSProfile(
+                depth=1,
+                history=HistoryPolicy.KEEP_LAST,
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            )
+            self._pub_mission_enable = self.create_publisher(
+                Bool, gp('mission_enable_topic'), enable_qos)
+            # Seed the latched value so a supervisor that starts
+            # before the operator has touched the button sees False.
+            self._pub_mission_enable.publish(Bool(data=False))
+            self._pub_mission_restart = self.create_publisher(
+                Bool, gp('mission_restart_topic'), 5)
 
             rate = float(gp('mission_in_rate_hz'))
             self.create_timer(1.0 / rate, self._poll_mission_inputs)
@@ -395,6 +447,13 @@ class NtBridge(Node):
         self._press_btn_pub.set(msg.data)
         self.get_logger().info(f'NT press_button -> {msg.data!r}')
 
+    def _on_mission_cmd(self, msg: String) -> None:
+        # Forward "load" | "unload" | "stow" to the Rio's lift+pusher
+        # state machine. Validation lives on the Rio side; we forward
+        # whatever the supervisor sends.
+        self._mission_cmd_pub.set(msg.data)
+        self.get_logger().info(f'NT mission_cmd -> {msg.data!r}')
+
     def _poll_mission_inputs(self) -> None:
         # Rising-edge detection: publish Bool(True) on False->True.
         # We do NOT publish Bool(False) on the falling edge — the
@@ -408,6 +467,17 @@ class NtBridge(Node):
                            '_prev_mission_loaded', self._pub_mission_loaded)
         self._edge_publish('mission_unloaded', self._sub_mission_unloaded.get(),
                            '_prev_mission_unloaded', self._pub_mission_unloaded)
+        # Enable is level-triggered: republish on every change so the
+        # supervisor sees the held state, not just events. Latched QoS
+        # means late subscribers also pick up the current value.
+        cur_enable = bool(self._sub_mission_enable.get())
+        if cur_enable != self._prev_mission_enable:
+            self._pub_mission_enable.publish(Bool(data=cur_enable))
+            self.get_logger().info(f'NT mission_enable -> {cur_enable}')
+            self._prev_mission_enable = cur_enable
+        # Restart is edge-triggered like start/loaded/unloaded.
+        self._edge_publish('mission_restart', self._sub_mission_restart.get(),
+                           '_prev_mission_restart', self._pub_mission_restart)
 
     def _edge_publish(self, label: str, current: bool, prev_attr: str, pub) -> None:
         prev = getattr(self, prev_attr)

@@ -14,6 +14,10 @@ dispatches each Action via:
   SWAP_MAP          -> std_msgs/Int32 on /map/swap_floor + an
                        /initialpose republish; map_server load + AMCL
                        re-init wiring is a TODO once per-floor maps exist
+  MISSION_CMD       -> std_msgs/String on /mission/cmd ("load" | "unload"
+                       | "stow") for the RoboRIO-side lift+pusher.
+                       Independent of the pneumatic press path, so can
+                       be in flight simultaneously with PRESS_BUTTON.
 
 Inputs (Snapshot):
   /elevator/door_state    -> DoorState   -> snap.door_state
@@ -32,6 +36,20 @@ Each one-shot input (start, loaded, unloaded, press_done) is consumed
 when the Mission advances past the WAIT state — i.e. we LATCH the
 flag, then clear it once it triggers a transition. Prevents an old
 "loaded=true" from accidentally re-triggering loading the next cycle.
+
+Hold-to-run / restart (2026-05-20):
+  /mission/enable  std_msgs/Bool, *level* — supervisor only ticks while
+    True. On a True->False transition we cancel any in-flight Nav2 goal
+    so the controller doesn't keep trying to drive into something while
+    we're paused. On False->True we re-issue the entry actions of the
+    current state (only idempotent ones: NAV_GOAL, SET_DOCK_TARGET,
+    SET_SAFE_TARGET). MISSION_CMD and PRESS_BUTTON are NOT re-issued —
+    the Rio side is independently gated on the same operator button and
+    will resume its own sequence.
+  /mission/restart std_msgs/Bool, *edge* — cancel in-flight Nav2,
+    clear all one-shot latches on the Snapshot, reset Mission to IDLE.
+  require_enable parameter — default True. Set False for the sim
+    driver so it doesn't have to publish /mission/enable to advance.
 """
 
 from typing import Optional
@@ -39,6 +57,7 @@ from typing import Optional
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from std_msgs.msg import Bool, String, Int32  # noqa: F401  (Int32 used below)
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 
@@ -50,6 +69,18 @@ from nav2_msgs.action import NavigateToPose
 from cart_elevator.supervisor.mission import (
     Mission, MissionConfig, Snapshot, Action, ActionKind, State,
 )
+
+
+# Action kinds that are safe to re-fire on a disable->enable resume.
+# NAV_GOAL re-plans, SET_DOCK_TARGET re-arms the controller, SET_SAFE_TARGET
+# re-tells the safe gate which floor to watch. The others have side effects
+# (Rio sequences, NT pulses) that we do NOT want to repeat.
+_RESUMABLE_ACTION_KINDS = frozenset({
+    ActionKind.NAV_GOAL,
+    ActionKind.SET_DOCK_TARGET,
+    ActionKind.CLEAR_DOCK_TARGET,
+    ActionKind.SET_SAFE_TARGET,
+})
 
 import math
 
@@ -90,6 +121,10 @@ class CartSupervisor(Node):
             ('into_cab_pose', [0.0, 0.0, 0.0]),
             ('out_of_cab_pose', [0.0, 0.0, 0.0]),
             ('dropoff_pose', [0.0, 0.0, 0.0]),
+            # Hold-to-run: when True (default), the supervisor only ticks
+            # while /mission/enable is True. Set False for the sim driver
+            # so mission_sim doesn't have to publish enable to advance.
+            ('require_enable', True),
         ])
         gp = lambda n: self.get_parameter(n).value
 
@@ -142,6 +177,15 @@ class CartSupervisor(Node):
         # ---- Snapshot fields (latched booleans + most-recent values) ----
         self.snap = Snapshot(target_floor=cfg.target_floor)
         self._nav_in_flight = False
+        self._nav_goal_handle = None   # for cancellation on pause / restart
+
+        # ---- Hold-to-run state ----
+        self._require_enable = bool(gp('require_enable'))
+        # Start disabled when require_enable is True. The bridge publishes
+        # the latched current value shortly after we subscribe, so we'll
+        # pick up the real state if the operator already has the button held.
+        self._enabled = (not self._require_enable)
+        self._prev_enabled = self._enabled
 
         # ---- Subscriptions feeding the Snapshot ----
         self.create_subscription(DoorState, '/elevator/door_state',
@@ -161,11 +205,28 @@ class CartSupervisor(Node):
                                  self._on_current_floor, 10)
         self.create_subscription(Bool, '/elevator/safe_to_enter',
                                  self._on_safe_to_enter, 10)
+        # Enable is latched (transient_local) on the bridge side; match
+        # the QoS so we receive the most-recent value on subscribe.
+        enable_qos = QoSProfile(
+            depth=1,
+            history=HistoryPolicy.KEEP_LAST,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(Bool, '/mission/enable',
+                                 self._on_enable, enable_qos)
+        self.create_subscription(Bool, '/mission/restart',
+                                 self._on_restart, 10)
 
         # ---- Action / service / publisher clients for the side effects ----
         self.nav_client = ActionClient(self, NavigateToPose, '/navigate_to_pose')
         self.dock_target_client = self.create_client(SetDockTarget, '/dock/set_target')
         self.press_pub = self.create_publisher(String, '/elevator/press_button', 5)
+        # /mission/cmd carries "load" | "unload" | "stow" to the
+        # RoboRIO-side lift+pusher (parallel mechanism to the
+        # pneumatic press, so this and /elevator/press_button can be
+        # in flight at the same time).
+        self.mission_cmd_pub = self.create_publisher(String, '/mission/cmd', 5)
         self.swap_map_pub = self.create_publisher(Int32, '/map/swap_floor', 5)
         # Retarget the safe gate before each boarding WAIT phase.
         self.safe_target_pub = self.create_publisher(
@@ -223,11 +284,69 @@ class CartSupervisor(Node):
         # is true at tick time, regardless of how long it's been so.
         self.snap.safe_to_enter = bool(msg.data)
 
+    def _on_enable(self, msg: Bool) -> None:
+        # Level-triggered: True while operator holds the dead-man button.
+        # The actual edge handling (cancel-on-pause, re-issue-on-resume)
+        # lives in _tick where we have the mission state to act on.
+        self._enabled = bool(msg.data)
+
+    def _on_restart(self, msg: Bool) -> None:
+        if not msg.data:
+            return
+        # Cancel any in-flight side effects, clear latches, reset state.
+        # This fires even while disabled — the operator can restart from
+        # a frozen state without first re-enabling.
+        self.get_logger().warn('mission: RESTART pressed -> IDLE')
+        self._cancel_nav_goal()
+        self._clear_dock_target()
+        # Wipe all one-shot latches AND level-triggered safe gate cache —
+        # nothing should carry across a restart.
+        self.snap = Snapshot(target_floor=self.cfg.target_floor)
+        self.mission.reset()
+
     # ----- tick -----
 
     def _tick(self) -> None:
+        # Handle enable edges first; they may abort the rest of this tick.
+        if self._require_enable and self._enabled != self._prev_enabled:
+            if self._enabled:
+                # Resume: re-issue idempotent entry actions of the
+                # current state (cancelled nav goals, cleared dock
+                # targets) so the controllers pick up where we paused.
+                resume_actions = [
+                    a for a in self.mission.entry_actions_for_current_state()
+                    if a.kind in _RESUMABLE_ACTION_KINDS
+                ]
+                if resume_actions:
+                    self.get_logger().info(
+                        f'mission: RESUMED in {self.mission.state.value} — '
+                        f're-issuing {[a.kind.value for a in resume_actions]}')
+                    for a in resume_actions:
+                        self._dispatch(a)
+                else:
+                    self.get_logger().info(
+                        f'mission: RESUMED in {self.mission.state.value}')
+            else:
+                # Pause: cancel in-flight Nav2 so the controller doesn't
+                # keep trying to drive while we're frozen. Rio is gated
+                # on its own copy of the dead-man button, so /cmd_vel will
+                # stop being actuated regardless — this just keeps the
+                # action server from timing out on a long pause.
+                self.get_logger().info(
+                    f'mission: PAUSED in {self.mission.state.value}')
+                self._cancel_nav_goal()
+            self._prev_enabled = self._enabled
+
+        # While disabled, publish current state for observability but
+        # don't tick the machine or dispatch anything.
+        if self._require_enable and not self._enabled:
+            s = String()
+            s.data = self.mission.state.value
+            self.state_pub.publish(s)
+            return
+
         prev_state = self.mission.state
-        new_state, action = self.mission.step(self.snap)
+        new_state, actions = self.mission.step(self.snap)
 
         # Publish current state so it's observable.
         s = String()
@@ -237,7 +356,8 @@ class CartSupervisor(Node):
         if new_state != prev_state:
             self.get_logger().info(
                 f'mission: {prev_state.value} -> {new_state.value}')
-            self._dispatch(action)
+            for action in actions:
+                self._dispatch(action)
             # Clear one-shot latches so they don't re-fire next tick.
             self._consume_latches(prev_state)
 
@@ -280,6 +400,8 @@ class CartSupervisor(Node):
             self._swap_map(action.payload['floor'])
         elif action.kind == ActionKind.SET_SAFE_TARGET:
             self._set_safe_target(action.payload['floor'])
+        elif action.kind == ActionKind.MISSION_CMD:
+            self._publish_mission_cmd(action.payload['cmd'])
 
     def _send_nav_goal(self, pose) -> None:
         frame_id, x, y, yaw = pose
@@ -312,8 +434,23 @@ class CartSupervisor(Node):
             self.get_logger().error('nav: goal rejected')
             self.snap.nav_failed = True
             return
+        # Hold the handle so a pause/restart can cancel it.
+        self._nav_goal_handle = handle
         result_fut = handle.get_result_async()
         result_fut.add_done_callback(self._on_nav_result)
+
+    def _cancel_nav_goal(self) -> None:
+        if self._nav_goal_handle is None:
+            return
+        self.get_logger().info('nav: cancelling in-flight goal')
+        # Fire-and-forget — the cancel response itself isn't actionable.
+        self._nav_goal_handle.cancel_goal_async()
+        self._nav_goal_handle = None
+        self._nav_in_flight = False
+        # Clear stale nav latches so we don't think a cancelled goal
+        # succeeded on the next tick.
+        self.snap.nav_succeeded = False
+        self.snap.nav_failed = False
 
     def _on_nav_result(self, future) -> None:
         status = future.result().status
@@ -374,6 +511,12 @@ class CartSupervisor(Node):
         msg.data = button
         self.press_pub.publish(msg)
         self.get_logger().info(f'press: {button} (waiting on /elevator/press_done)')
+
+    def _publish_mission_cmd(self, cmd: str) -> None:
+        msg = String()
+        msg.data = cmd
+        self.mission_cmd_pub.publish(msg)
+        self.get_logger().info(f'mission_cmd: {cmd}')
 
     def _set_safe_target(self, floor: int) -> None:
         # Tell the safe gate which floor to expect. Also pre-clear the
