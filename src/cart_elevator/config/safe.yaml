@@ -1,0 +1,20 @@
+###############################################################################
+# Safe-to-enter gate parameters. AND of door OPEN + direction IDLE + correct
+# floor + inside_clear (all fresh and above the confidence floor).
+###############################################################################
+
+safe_to_enter_gate:
+  ros__parameters:
+    door_topic: /elevator/door_state
+    direction_topic: /elevator/direction
+    floor_topic: /elevator/floor
+    inside_clear_topic: /elevator/inside_clear
+    output_topic: /elevator/safe_to_enter
+    target_floor: 1
+    max_age_s: 2.0
+    min_confidence: 0.50
+    publish_rate_hz: 5.0
+    # If no /elevator/inside_clear publisher exists, assume clear.
+    # Once an inside-the-cab obstacle detector is built, set this to
+    # false so a missing detector fails closed instead of open.
+    inside_clear_default: true

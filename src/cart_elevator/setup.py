@@ -43,6 +43,8 @@ setup(
             'cart_supervisor = cart_elevator.supervisor.cart_supervisor:main',
             # Per-floor map swap + AMCL relocalize helper
             'map_swap_node = cart_elevator.maps.map_swap_node:main',
+            # Safe-to-enter gate (door + direction + floor + inside_clear)
+            'safe_to_enter_gate = cart_elevator.safe.safe_to_enter_gate:main',
             # Test helpers
             'fake_tag_publisher = cart_elevator.test_helpers.fake_tag:main',
             'fake_elevator_imu = cart_elevator.test_helpers.fake_imu:main',
