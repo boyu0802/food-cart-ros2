@@ -123,6 +123,8 @@ class ActionKind(Enum):
     PRESS_BUTTON = 'PRESS_BUTTON'   # NT key to RoboRIO
     SWAP_MAP = 'SWAP_MAP'
     SET_SAFE_TARGET = 'SET_SAFE_TARGET'  # retarget safe_to_enter_gate
+    MISSION_CMD = 'MISSION_CMD'     # Pi/mission/cmd to RoboRIO
+                                     # ("load" | "unload" | "stow")
 
 
 @dataclass
@@ -174,12 +176,31 @@ class Mission:
         self.state = State.IDLE
         self._entry_action: Optional[Action] = None
 
-    def step(self, snap: Snapshot) -> tuple[State, Action]:
+    def step(self, snap: Snapshot) -> tuple[State, list['Action']]:
+        """Advance one tick. Returns the new state + a list of actions
+        to dispatch in order. Most states emit zero or one action;
+        NAV_TO_HALLWAY_CALL emits two (stow the intake, then nav)."""
         prev = self.state
         self.state = self._next(snap)
         if self.state == prev:
-            return self.state, Action(ActionKind.NONE)
+            return self.state, []
         return self.state, self._on_enter(self.state, snap)
+
+    def reset(self) -> None:
+        """Drop the mission back to IDLE. Called by the wrapper on a
+        restart-button rising edge. The wrapper is responsible for also
+        cancelling any in-flight side effects (Nav2 goal, dock target)
+        and clearing one-shot latches on the Snapshot — this method
+        only resets the pure-layer state."""
+        self.state = State.IDLE
+        self._entry_action = None
+
+    def entry_actions_for_current_state(self) -> list['Action']:
+        """Re-emit the on-enter actions for the current state without
+        ticking. The wrapper uses this on a disable->enable transition
+        to re-issue Nav2 goals or dock targets that were cancelled
+        during the pause."""
+        return self._on_enter(self.state, Snapshot())
 
     def _next(self, s: Snapshot) -> State:
         cur = self.state
@@ -253,52 +274,71 @@ class Mission:
 
         return cur
 
-    def _on_enter(self, st: State, s: Snapshot) -> Action:
+    def _on_enter(self, st: State, s: Snapshot) -> list['Action']:
         c = self.cfg
-        # Map state -> the one-shot action to fire when we enter it.
+        # Map state -> the list of actions to fire when we enter it.
+        # Most states emit one; NAV_TO_HALLWAY_CALL emits stow + nav
+        # because the cart has just finished loading and the lift+pusher
+        # has to retract before we drive.
         if st == State.NAV_TO_PICKUP:
-            return Action(ActionKind.NAV_GOAL, {'pose': c.pickup_approach_pose})
+            return [Action(ActionKind.NAV_GOAL,
+                           {'pose': c.pickup_approach_pose})]
         if st == State.DOCK_PICKUP:
-            return Action(ActionKind.SET_DOCK_TARGET,
-                          {'tag_id': c.pickup_tag_id})
+            return [Action(ActionKind.SET_DOCK_TARGET,
+                           {'tag_id': c.pickup_tag_id})]
+        if st == State.WAIT_LOADED:
+            # Cart is parked at the loading station — tell RoboRIO to
+            # run the lift+pusher cycle. The Rio-side intake machine
+            # eventually pulses Robot/mission/loaded=true.
+            return [Action(ActionKind.MISSION_CMD, {'cmd': 'load'})]
         if st == State.NAV_TO_HALLWAY_CALL:
-            return Action(ActionKind.NAV_GOAL,
-                          {'pose': c.hallway_approach_pose})
+            # Retract the lift+pusher first ("stow"), then drive away.
+            # Both fire in the same tick — the Rio handles the stow
+            # during the early phase of the drive.
+            return [Action(ActionKind.MISSION_CMD, {'cmd': 'stow'}),
+                    Action(ActionKind.NAV_GOAL,
+                           {'pose': c.hallway_approach_pose})]
         if st == State.DOCK_HALLWAY_CALL:
-            return Action(ActionKind.SET_DOCK_TARGET,
-                          {'tag_id': c.hallway_panel_tag_id})
+            return [Action(ActionKind.SET_DOCK_TARGET,
+                           {'tag_id': c.hallway_panel_tag_id})]
         if st == State.PRESS_CALL_BUTTON:
-            return Action(ActionKind.PRESS_BUTTON,
-                          {'button': 'call_up'})
+            return [Action(ActionKind.PRESS_BUTTON,
+                           {'button': 'call_up'})]
         if st == State.WAIT_FOR_HALLWAY_DOOR_OPEN:
             # Retarget the safe gate to the floor we're standing on
             # (we're waiting for a car to arrive HERE).
-            return Action(ActionKind.SET_SAFE_TARGET,
-                          {'floor': c.starting_floor})
+            return [Action(ActionKind.SET_SAFE_TARGET,
+                           {'floor': c.starting_floor})]
         if st == State.NAV_INTO_CAB:
-            return Action(ActionKind.NAV_GOAL, {'pose': c.into_cab_pose})
+            return [Action(ActionKind.NAV_GOAL,
+                           {'pose': c.into_cab_pose})]
         if st == State.DOCK_IN_CAB_BUTTON:
-            return Action(ActionKind.SET_DOCK_TARGET,
-                          {'tag_id': c.in_cab_panel_tag_id})
+            return [Action(ActionKind.SET_DOCK_TARGET,
+                           {'tag_id': c.in_cab_panel_tag_id})]
         if st == State.PRESS_FLOOR_BUTTON:
-            return Action(ActionKind.PRESS_BUTTON,
-                          {'button': f'floor_{c.target_floor}'})
+            return [Action(ActionKind.PRESS_BUTTON,
+                           {'button': f'floor_{c.target_floor}'})]
         if st == State.WAIT_FOR_FLOOR_REACHED:
             # Retarget safe gate to the destination floor — now we
             # wait for the car to arrive THERE.
-            return Action(ActionKind.SET_SAFE_TARGET,
-                          {'floor': c.target_floor})
+            return [Action(ActionKind.SET_SAFE_TARGET,
+                           {'floor': c.target_floor})]
         if st == State.NAV_OUT_OF_CAB:
-            return Action(ActionKind.NAV_GOAL, {'pose': c.out_of_cab_pose})
+            return [Action(ActionKind.NAV_GOAL,
+                           {'pose': c.out_of_cab_pose})]
         if st == State.RELOCALIZE_AT_FLOOR:
-            return Action(ActionKind.SWAP_MAP,
-                          {'floor': c.target_floor})
+            return [Action(ActionKind.SWAP_MAP,
+                           {'floor': c.target_floor})]
         if st == State.NAV_TO_DROPOFF:
-            return Action(ActionKind.NAV_GOAL,
-                          {'pose': c.dropoff_approach_pose})
+            return [Action(ActionKind.NAV_GOAL,
+                           {'pose': c.dropoff_approach_pose})]
         if st == State.DOCK_DROPOFF:
-            return Action(ActionKind.SET_DOCK_TARGET,
-                          {'tag_id': c.dropoff_tag_id})
-        # All WAIT_* states and DONE/FAULT/IDLE intentionally do nothing
-        # on entry.
-        return Action(ActionKind.NONE)
+            return [Action(ActionKind.SET_DOCK_TARGET,
+                           {'tag_id': c.dropoff_tag_id})]
+        if st == State.WAIT_UNLOADED:
+            # Cart parked at drop-off — tell RoboRIO to run the
+            # lift+pusher in reverse. Rio pulses Robot/mission/
+            # unloaded=true when done.
+            return [Action(ActionKind.MISSION_CMD, {'cmd': 'unload'})]
+        # DONE/FAULT/IDLE intentionally do nothing on entry.
+        return []

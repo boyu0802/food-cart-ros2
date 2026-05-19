@@ -31,7 +31,10 @@ def generate_launch_description():
     return LaunchDescription([
         Node(package='cart_elevator', executable='cart_supervisor',
              name='cart_supervisor', output='screen',
-             parameters=[mission_yaml]),
+             # require_enable=False so the sim doesn't need to publish
+             # /mission/enable — keeps the existing one-shot start
+             # workflow (publish /mission/start once) working.
+             parameters=[mission_yaml, {'require_enable': False}]),
         # Real safe gate — exercises the full retarget + AND path
         # against sim_driver-published door/direction/floor inputs.
         Node(package='cart_elevator', executable='safe_to_enter_gate',

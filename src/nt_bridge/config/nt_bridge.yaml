@@ -33,6 +33,11 @@ nt_bridge:
     # "call_up" or "floor_4"; the RoboRIO consumes the latest value).
     press_button_topic: "/elevator/press_button"
     nt_press_button_key: "Pi/elevator/press_button"
+    # Lift+pusher commands ("load" | "unload" | "stow"). Runs in
+    # parallel with the press path on the Rio side — separate
+    # mechanism, separate NT key.
+    mission_cmd_topic: "/mission/cmd"
+    nt_mission_cmd_key: "Pi/mission/cmd"
     # NT bool -> ROS Bool, edge-triggered (publish only on rising edge).
     press_done_topic: "/elevator/press_done"
     nt_press_done_key: "Robot/elevator/press_done"
@@ -42,6 +47,16 @@ nt_bridge:
     nt_mission_loaded_key: "Robot/mission/loaded"
     mission_unloaded_topic: "/mission/unloaded"
     nt_mission_unloaded_key: "Robot/mission/unloaded"
+    # Hold-to-run dead-man: operator holds a controller button on the
+    # Rio; supervisor only ticks while this is true. Level-triggered
+    # (not edge): /mission/enable is republished as a latched Bool on
+    # every change so late subscribers always see the current state.
+    mission_enable_topic: "/mission/enable"
+    nt_mission_enable_key: "Robot/mission/enable"
+    # Restart button: edge-triggered like start/loaded. On a rising
+    # edge the supervisor cancels in-flight work and returns to IDLE.
+    mission_restart_topic: "/mission/restart"
+    nt_mission_restart_key: "Robot/mission/restart_pressed"
     mission_in_rate_hz: 20.0      # NT poll rate; high enough to not miss FRC ~20ms pulses
 
     # ===== rates =====
