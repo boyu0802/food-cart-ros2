@@ -1,0 +1,18 @@
+[floor_v2_time-4] [INFO] [1779120768.372189122] [floor_v2_time]: floor_v2_time ready (start=1, speed=1.5 m/s, floor_h=3.5 m)
+[floor_v1_apriltag-3] [INFO] [1779120768.427618905] [floor_v1_apriltag]: floor_v1_apriltag ready (offset=100, min_area=0.005)
+[floor_v3_accel-5] [INFO] [1779120768.490467403] [floor_v3_accel]: floor_v3_accel ready (start=1, floor_h=3.5 m)
+[floor_v4_fusion-6] [INFO] [1779120768.581537701] [floor_v4_fusion]: floor_v4_fusion ready
+[floor_v2_time-4] [INFO] [1779120770.583060561] [floor_v2_time]: trip start: dir=UP
+[floor_v3_accel-5] [INFO] [1779120770.583243724] [floor_v3_accel]: trip start: dir=UP, bias=0.0000 m/s^2
+[floor_v3_accel-5] [INFO] [1779120770.593627682] [floor_v3_accel]:   TEMP_DEBUG v_z=+0.0100 m/s z=+0.000 m a_z=+0.9659
+[floor_v3_accel-5] [INFO] [1779120771.603037771] [floor_v3_accel]:   TEMP_DEBUG v_z=+1.0177 m/s z=+0.524 m a_z=+0.9964
+[floor_v3_accel-5] [INFO] [1779120772.603387177] [floor_v3_accel]:   TEMP_DEBUG v_z=+1.4068 m/s z=+1.857 m a_z=-0.0097
+[floor_v3_accel-5] [INFO] [1779120773.610569015] [floor_v3_accel]:   TEMP_DEBUG v_z=+1.4059 m/s z=+3.276 m a_z=+0.0051
+[floor_v3_accel-5] [INFO] [1779120774.610884908] [floor_v3_accel]:   TEMP_DEBUG v_z=+1.4041 m/s z=+4.682 m a_z=-0.0283
+[floor_v3_accel-5] [INFO] [1779120775.612951355] [floor_v3_accel]:   TEMP_DEBUG v_z=+1.4074 m/s z=+6.089 m a_z=-0.0685
+[floor_v3_accel-5] [INFO] [1779120776.620806969] [floor_v3_accel]:   TEMP_DEBUG v_z=+1.4093 m/s z=+7.511 m a_z=-0.0028
+[floor_v3_accel-5] [INFO] [1779120777.630947459] [floor_v3_accel]:   TEMP_DEBUG v_z=+1.2710 m/s z=+8.924 m a_z=-0.9850
+[floor_v3_accel-5] [INFO] [1779120778.641055005] [floor_v3_accel]:   TEMP_DEBUG v_z=+0.2602 m/s z=+9.692 m a_z=-1.0159
+[floor_v3_accel-5] [INFO] [1779120779.653835626] [floor_v3_accel]:   TEMP_DEBUG v_z=-0.0898 m/s z=+9.661 m a_z=+0.0134
+[floor_v3_accel-5] [INFO] [1779120779.802447603] [floor_v3_accel]: trip end: integrated z=9.65m, floors_changed=3, now at 4
+[floor_v2_time-4] [INFO] [1779120779.989942773] [floor_v2_time]: trip end: duration=8.41s, distance=12.61m, floors=4, now at 5
