@@ -1,12 +1,25 @@
 #!/usr/bin/env python3
 """NetworkTables 4 <-> ROS2 bridge for Team 6998 autonomous food cart.
 
-Four flows:
+Five flows:
   ROS2  /cmd_vel          ->  NT  Nav/cmd/{vx,vy,omega,heartbeat,timestamp}
   NT    Robot/odom/*      ->  ROS2 nav_msgs/Odometry on /odom (+ optional TF)
   NT    Robot/imu/*       ->  ROS2 sensor_msgs/Imu on /imu
   NT    limelight/{tv,tid,tx,ty,ta,targetpose_robotspace}
                           ->  ROS2 cart_elevator_msgs/TagDetection on /limelight/tag
+
+Mission control (new 2026-05-19):
+  ROS2  /elevator/press_button       ->  NT  Pi/elevator/press_button (string)
+  NT    Robot/elevator/press_done    ->  ROS2 std_msgs/Bool on /elevator/press_done
+  NT    Robot/mission/start_pressed  ->  ROS2 std_msgs/Bool on /mission/start
+  NT    Robot/mission/loaded         ->  ROS2 std_msgs/Bool on /mission/loaded
+  NT    Robot/mission/unloaded       ->  ROS2 std_msgs/Bool on /mission/unloaded
+
+NT->ROS bools are edge-triggered: we publish Bool(True) the first tick we
+see the NT value go False->True, then nothing until the next rising edge.
+That matches the supervisor's latch semantics — it only cares about "the
+event happened," not the held state. Polling at mission_in_rate_hz; pick
+high enough that a 1-robot-tick (~20 ms) FRC pulse can't slip through.
 
 Watchdog: if no /cmd_vel arrives within `cmd_vel_max_age` seconds, the bridge
 publishes (0, 0, 0) to NT so the RoboRIO stops the swerve.
@@ -22,6 +35,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist, TwistStamped, TransformStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
+from std_msgs.msg import Bool, String
 from tf2_ros import TransformBroadcaster
 
 from cart_elevator_msgs.msg import TagDetection
@@ -63,6 +77,7 @@ class NtBridge(Node):
             ('enable_odom_in', True),
             ('enable_imu_in', True),
             ('enable_limelight_in', True),
+            ('enable_mission_io', True),
             ('cmd_vel_topic', '/cmd_vel'),
             ('cmd_vel_stamped', False),
             ('cmd_vel_max_age', 0.5),
@@ -73,6 +88,19 @@ class NtBridge(Node):
             ('nt_odom_table', 'Robot/odom'),
             ('nt_imu_table', 'Robot/imu'),
             ('nt_limelight_table', 'limelight'),
+            # Mission-IO NT keys (flat — no shared sub-table) so they
+            # show up cleanly in Shuffleboard / OutlineViewer.
+            ('press_button_topic', '/elevator/press_button'),
+            ('press_done_topic', '/elevator/press_done'),
+            ('mission_start_topic', '/mission/start'),
+            ('mission_loaded_topic', '/mission/loaded'),
+            ('mission_unloaded_topic', '/mission/unloaded'),
+            ('nt_press_button_key', 'Pi/elevator/press_button'),
+            ('nt_press_done_key', 'Robot/elevator/press_done'),
+            ('nt_mission_start_key', 'Robot/mission/start_pressed'),
+            ('nt_mission_loaded_key', 'Robot/mission/loaded'),
+            ('nt_mission_unloaded_key', 'Robot/mission/unloaded'),
+            ('mission_in_rate_hz', 20.0),
             ('odom_publish_rate', 50.0),
             ('imu_publish_rate', 100.0),
             ('tag_publish_rate', 20.0),
@@ -166,6 +194,45 @@ class NtBridge(Node):
                 TagDetection, gp('tag_topic'), 10)
             rate = float(gp('tag_publish_rate'))
             self.create_timer(1.0 / rate, self._publish_tag)
+
+        # ---- mission IO (NT <-> ROS) ----
+        if gp('enable_mission_io'):
+            # Pi -> NT: press_button (ROS String forwarded as NT string).
+            self._press_btn_pub = self._nt.getStringTopic(
+                gp('nt_press_button_key')).publish()
+            self._press_btn_pub.set('')   # clear any stale value on boot
+            self.create_subscription(
+                String, gp('press_button_topic'),
+                self._on_press_button, 5)
+
+            # NT -> Pi: edge-triggered bools. We subscribe with a sentinel
+            # of False so the first reading is well-defined; track the
+            # previous value to detect rising edges.
+            self._sub_press_done = self._nt.getBooleanTopic(
+                gp('nt_press_done_key')).subscribe(False)
+            self._sub_mission_start = self._nt.getBooleanTopic(
+                gp('nt_mission_start_key')).subscribe(False)
+            self._sub_mission_loaded = self._nt.getBooleanTopic(
+                gp('nt_mission_loaded_key')).subscribe(False)
+            self._sub_mission_unloaded = self._nt.getBooleanTopic(
+                gp('nt_mission_unloaded_key')).subscribe(False)
+
+            self._prev_press_done = False
+            self._prev_mission_start = False
+            self._prev_mission_loaded = False
+            self._prev_mission_unloaded = False
+
+            self._pub_press_done = self.create_publisher(
+                Bool, gp('press_done_topic'), 5)
+            self._pub_mission_start = self.create_publisher(
+                Bool, gp('mission_start_topic'), 5)
+            self._pub_mission_loaded = self.create_publisher(
+                Bool, gp('mission_loaded_topic'), 5)
+            self._pub_mission_unloaded = self.create_publisher(
+                Bool, gp('mission_unloaded_topic'), 5)
+
+            rate = float(gp('mission_in_rate_hz'))
+            self.create_timer(1.0 / rate, self._poll_mission_inputs)
 
         self.get_logger().info('nt_bridge ready')
 
@@ -318,6 +385,38 @@ class NtBridge(Node):
             msg.has_pose = False
 
         self._tag_pub.publish(msg)
+
+
+    # ===== mission IO =====
+    def _on_press_button(self, msg: String) -> None:
+        # Forward whatever the supervisor says verbatim. RoboRIO is
+        # responsible for picking the right pneumatic setpoint per
+        # button name ('call_up' / 'floor_4' / ...).
+        self._press_btn_pub.set(msg.data)
+        self.get_logger().info(f'NT press_button -> {msg.data!r}')
+
+    def _poll_mission_inputs(self) -> None:
+        # Rising-edge detection: publish Bool(True) on False->True.
+        # We do NOT publish Bool(False) on the falling edge — the
+        # supervisor's latches only care about the event, not the
+        # held state, so emitting False would just be noise.
+        self._edge_publish('press_done', self._sub_press_done.get(),
+                           '_prev_press_done', self._pub_press_done)
+        self._edge_publish('mission_start', self._sub_mission_start.get(),
+                           '_prev_mission_start', self._pub_mission_start)
+        self._edge_publish('mission_loaded', self._sub_mission_loaded.get(),
+                           '_prev_mission_loaded', self._pub_mission_loaded)
+        self._edge_publish('mission_unloaded', self._sub_mission_unloaded.get(),
+                           '_prev_mission_unloaded', self._pub_mission_unloaded)
+
+    def _edge_publish(self, label: str, current: bool, prev_attr: str, pub) -> None:
+        prev = getattr(self, prev_attr)
+        if current and not prev:
+            msg = Bool()
+            msg.data = True
+            pub.publish(msg)
+            self.get_logger().info(f'NT rising edge: {label}')
+        setattr(self, prev_attr, bool(current))
 
 
 def main(args=None) -> None:

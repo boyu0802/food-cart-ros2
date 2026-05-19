@@ -11,6 +11,7 @@ nt_bridge:
     enable_odom_in: true
     enable_imu_in: true
     enable_limelight_in: true     # Limelight AprilTag detections -> /limelight/tag
+    enable_mission_io: true       # press-button + start/loaded/unloaded/press_done
 
     # ===== ROS2 topic names =====
     cmd_vel_topic: "/cmd_vel"
@@ -26,6 +27,22 @@ nt_bridge:
     nt_odom_table: "Robot/odom"   # subscribes x, y, theta, vx, vy, omega
     nt_imu_table: "Robot/imu"     # subscribes yaw, yaw_rate, accel_x, accel_y
     nt_limelight_table: "limelight"  # default Limelight table; "limelight-<name>" if renamed
+
+    # ===== mission I/O =====
+    # ROS topic -> NT string (the supervisor publishes button names like
+    # "call_up" or "floor_4"; the RoboRIO consumes the latest value).
+    press_button_topic: "/elevator/press_button"
+    nt_press_button_key: "Pi/elevator/press_button"
+    # NT bool -> ROS Bool, edge-triggered (publish only on rising edge).
+    press_done_topic: "/elevator/press_done"
+    nt_press_done_key: "Robot/elevator/press_done"
+    mission_start_topic: "/mission/start"
+    nt_mission_start_key: "Robot/mission/start_pressed"
+    mission_loaded_topic: "/mission/loaded"
+    nt_mission_loaded_key: "Robot/mission/loaded"
+    mission_unloaded_topic: "/mission/unloaded"
+    nt_mission_unloaded_key: "Robot/mission/unloaded"
+    mission_in_rate_hz: 20.0      # NT poll rate; high enough to not miss FRC ~20ms pulses
 
     # ===== rates =====
     odom_publish_rate: 50.0       # Hz
