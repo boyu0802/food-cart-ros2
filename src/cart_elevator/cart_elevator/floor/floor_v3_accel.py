@@ -17,8 +17,27 @@ and subtract it during motion. Even so, accuracy degrades on long trips.
 Bias estimation: average (accel_z - g) over the last bias_window_s seconds
 of stationary data. Reset velocity + position to zero at the start of each
 trip; this prevents inter-trip drift accumulation.
+
+Stationarity gate: a sample is admitted to the bias estimator only when
+the variance of (accel_z - g) over the last bias_var_window_n samples is
+below bias_var_thr_mss2. This is independent of the bias magnitude — a
+constant-but-large bias still has near-zero variance, so the estimator
+keeps learning even at biases that would saturate a magnitude-threshold
+gate. Replaces the older `|signed_dev_raw| < move_thr` gate, which broke
+once the bias itself exceeded `move_thr` because every stationary sample
+then looked like motion.
+
+Optional correction input (`correction_topic`): when v4_fusion sees a
+fresh AprilTag and judges the cart stationary, it publishes the
+authoritative floor here. On receipt — *only if v3 itself is also
+stationary* — we snap `current_floor` to the corrected value and back out
+an implied bias error from the residual of the most recent trip
+(Δz ≈ ½·b·T² ⇒ b ≈ 2·Δz/T²). The trip metadata used for this lives in
+`last_trip_*`. v3 with no correction stream still works as the pure-IMU
+baseline used in the bias sweep.
 """
 
+import statistics
 from collections import deque
 
 import rclpy
@@ -43,6 +62,10 @@ class FloorV3Accel(Node):
             ('start_samples', 10),
             ('stop_samples', 100),
             ('bias_window_s', 5.0),
+            ('bias_var_thr_mss2', 0.01),
+            ('bias_var_window_n', 25),
+            ('correction_topic', '/elevator/floor_v3_accel/correction'),
+            ('correction_max_floor_delta', 2),
             ('publish_rate_hz', 5.0),
         ])
         gp = lambda n: self.get_parameter(n).value
@@ -55,6 +78,9 @@ class FloorV3Accel(Node):
         self.start_samples = int(gp('start_samples'))
         self.stop_samples = int(gp('stop_samples'))
         self.bias_window = float(gp('bias_window_s'))
+        self.var_thr = float(gp('bias_var_thr_mss2'))
+        self.var_window_n = int(gp('bias_var_window_n'))
+        self.correction_max_delta = int(gp('correction_max_floor_delta'))
         publish_rate = float(gp('publish_rate_hz'))
 
         # State
@@ -65,13 +91,23 @@ class FloorV3Accel(Node):
         self.idle_streak = 0
         self.bias_z = 0.0
         self.bias_samples: deque = deque(maxlen=int(self.bias_window * 100))
+        self.var_buf: deque = deque(maxlen=self.var_window_n)
 
         # Integrators (only valid during a trip)
         self.v_z = 0.0
         self.z = 0.0
         self.last_t = None
 
+        # Most-recent trip metadata, for the residual-based bias correction
+        # below. Set when a trip ends; consumed if a correction arrives soon
+        # after. trip_start_t is set when a trip begins.
+        self.trip_start_t: float | None = None
+        self.last_trip_z = 0.0
+        self.last_trip_duration_s = 0.0
+
         self.create_subscription(Imu, self.imu_topic, self._on_imu, 50)
+        self.create_subscription(
+            FloorEstimate, gp('correction_topic'), self._on_correction, 10)
         self.pub = self.create_publisher(FloorEstimate, self.output_topic, 10)
         self.create_timer(1.0 / publish_rate, self._publish)
 
@@ -85,11 +121,17 @@ class FloorV3Accel(Node):
     def _on_imu(self, msg: Imu) -> None:
         now = self._now_s()
         signed_dev_raw = msg.linear_acceleration.z - GRAVITY
+        self.var_buf.append(signed_dev_raw)
 
-        # Only fold genuinely-quiescent samples into the bias estimate —
-        # if abs deviation is already above the move threshold, the sample
-        # likely belongs to a trip (and we'd otherwise mask the trip).
-        if not self.is_moving and abs(signed_dev_raw) < self.move_thr:
+        # Variance-gated bias estimator. A magnitude gate (the old approach)
+        # rejects stationary samples once `bias > move_thr`, freezing the
+        # estimate at 0 and causing linear position drift. Variance over a
+        # short rolling window is independent of the bias magnitude — a
+        # constant-but-large bias still has ~zero variance, so we keep
+        # admitting samples and the running mean converges to the true bias.
+        if (not self.is_moving
+                and len(self.var_buf) >= self.var_window_n
+                and statistics.pvariance(self.var_buf) < self.var_thr):
             self.bias_samples.append(signed_dev_raw)
             if self.bias_samples:
                 self.bias_z = sum(self.bias_samples) / len(self.bias_samples)
@@ -109,6 +151,7 @@ class FloorV3Accel(Node):
                     self.v_z = 0.0
                     self.z = 0.0
                     self.last_t = now
+                    self.trip_start_t = now
                     self.get_logger().info(
                         f'trip start: dir={"UP" if self.direction>0 else "DOWN"}, '
                         f'bias={self.bias_z:.4f} m/s^2')
@@ -139,14 +182,59 @@ class FloorV3Accel(Node):
                     self.get_logger().info(
                         f'trip end: integrated z={self.z:.2f}m, '
                         f'floors_changed={floors_changed}, now at {self.current_floor}')
+                    # Preserve the trip's metadata for residual-based bias
+                    # correction if a tag-driven correction arrives soon after.
+                    self.last_trip_z = self.z
+                    self.last_trip_duration_s = (
+                        now - self.trip_start_t if self.trip_start_t else 0.0)
                     self.is_moving = False
                     self.direction = 0
                     self.idle_streak = 0
                     self.v_z = 0.0
                     self.z = 0.0
                     self.last_t = None
+                    self.trip_start_t = None
             else:
                 self.idle_streak = 0
+
+    def _on_correction(self, msg: FloorEstimate) -> None:
+        # Tag-driven correction: snap current_floor and back out an implied
+        # bias error from the last trip's residual. Two safety gates:
+        # (1) only correct when v3 itself is stationary (don't yank mid-trip),
+        # (2) reject corrections whose floor delta exceeds correction_max_delta
+        # — those are more likely a stale or wrongly-routed tag than a real
+        # bias drift of that magnitude.
+        if self.is_moving:
+            return
+        delta = self.current_floor - int(msg.floor)
+        if abs(delta) > self.correction_max_delta:
+            self.get_logger().warning(
+                f'rejecting correction: |delta|={abs(delta)} > '
+                f'{self.correction_max_delta} (v3={self.current_floor}, '
+                f'tag={int(msg.floor)})')
+            return
+        if delta != 0 and self.last_trip_duration_s > 0.5:
+            # Δz overshoot = delta * floor_h. For constant bias over trip
+            # duration T: Δz ≈ ½·b·T² ⇒ b ≈ 2·Δz/T². Add directly (blend=1):
+            # one good correction should fully heal the bias, subsequent
+            # corrections refine.
+            residual_z = delta * self.floor_h
+            implied_bias = 2.0 * residual_z / (self.last_trip_duration_s ** 2)
+            old_bias = self.bias_z
+            self.bias_z += implied_bias
+            # Re-seed the bias_samples buffer with the corrected estimate so
+            # the running mean doesn't immediately drag bias_z back.
+            self.bias_samples.clear()
+            self.bias_samples.append(self.bias_z)
+            self.get_logger().info(
+                f'correction: floor {self.current_floor} -> {int(msg.floor)} '
+                f'(delta={delta}), bias {old_bias:.4f} -> {self.bias_z:.4f} '
+                f'(from trip T={self.last_trip_duration_s:.2f}s)')
+        else:
+            self.get_logger().info(
+                f'correction: floor {self.current_floor} -> {int(msg.floor)} '
+                f'(delta=0 or no recent trip, position only)')
+        self.current_floor = int(msg.floor)
 
     def _publish(self) -> None:
         out = FloorEstimate()

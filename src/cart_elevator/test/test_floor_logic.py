@@ -106,15 +106,17 @@ def test_v2_detects_motion_start_and_direction():
 def test_v2_detects_motion_stop_and_updates_floor():
     node = FloorV2Time()
 
-    # Phase 1: accel up
+    # Phase 1: accel up (ramp pulse, direction=+1)
     for _ in range(node.start_samples + 5):
         node._on_imu(_make_imu(GRAVITY + 1.0))
-    # Phase 2: cruise — back to gravity (no |a|>thr)
-    # Simulate ~3 seconds of cruise to traverse ~4.5m of floors
-    # (1.5 m/s * 3 s = 4.5 m ≈ 1.3 floors at 3.5 m/floor -> rounds to 1).
-    # But the node uses real wall clock, so we actually need to sleep.
-    # We instead set the trip_start_t directly to a known offset to make
-    # the time math deterministic.
+    # Phase 2: deceleration pulse — opposite-sign accel above move_thr.
+    # v2's stop detector requires saw_opposite_pulse=True before it'll
+    # accept a quiescent window as end-of-trip; without this the FSM
+    # would treat the quiescent phase as cruise and never stop.
+    for _ in range(node.start_samples + 5):
+        node._on_imu(_make_imu(GRAVITY - 1.0))
+    # Set trip_start_t deterministically so the duration math doesn't
+    # depend on wall-clock pacing of the loop above.
     node.trip_start_t = node._now_s() - 3.0  # pretend trip started 3s ago
     # Phase 3: stop — feed many quiescent samples
     for _ in range(node.stop_samples + 5):
@@ -180,16 +182,74 @@ def test_v4_prefers_fresh_apriltag():
 
 
 def test_v4_falls_back_when_apriltag_stale():
+    # v1 stale -> v2/v3 candidates only. With |v2-v3| <= 1 (agreement
+    # path), v4 picks the higher-confidence source; ties go to v3
+    # (physics over heuristic). Here we boost v2 above v3, so v2 should
+    # win.
     node = FloorV4Fusion()
     captured = _capture_published(node)
     now = node._now_s()
-    node.last_v1 = _make_estimate(5, FloorEstimate.SOURCE_APRILTAG, now - 100.0)
-    node.last_v2 = _make_estimate(3, FloorEstimate.SOURCE_TIME, now)
-    node.last_v3 = _make_estimate(2, FloorEstimate.SOURCE_ACCEL, now)
+    node.last_v1 = _make_estimate(5, FloorEstimate.SOURCE_APRILTAG,
+                                  now - 100.0, confidence=0.95)
+    node.last_v2 = _make_estimate(3, FloorEstimate.SOURCE_TIME,
+                                  now, confidence=0.95)
+    node.last_v3 = _make_estimate(2, FloorEstimate.SOURCE_ACCEL,
+                                  now, confidence=0.80)
     node._publish()
     assert len(captured) == 1
     assert captured[0].floor == 3
     node.destroy_node()
+
+
+def test_v4_disagreement_picks_closer_to_last_fusion():
+    # When v2 and v3 disagree by >1 floor, v4 picks whichever is closer
+    # to last_fusion (fallback starting_floor). last_fusion=3 -> v2=3 is
+    # closer than v3=5, so v2 wins despite v3's higher confidence.
+    node = FloorV4Fusion()
+    captured = _capture_published(node)
+    now = node._now_s()
+    node.last_fusion = _make_estimate(3, FloorEstimate.SOURCE_FUSION, now)
+    node.last_v1 = None
+    node.last_v2 = _make_estimate(3, FloorEstimate.SOURCE_TIME,
+                                  now, confidence=0.80)
+    node.last_v3 = _make_estimate(5, FloorEstimate.SOURCE_ACCEL,
+                                  now, confidence=0.95)
+    node._publish()
+    assert len(captured) == 1
+    assert captured[0].floor == 3
+    node.destroy_node()
+
+
+def test_v4_clamps_out_of_range_v2_saturation():
+    # v2 saturates at +8 floors past truth in the bias-sweep "after"
+    # regime. n_floors=5 must drop that candidate so v3 wins by default,
+    # not get polluted by the saturated value.
+    node = FloorV4Fusion()
+    captured = _capture_published(node)
+    now = node._now_s()
+    node.last_v1 = None
+    node.last_v2 = _make_estimate(12, FloorEstimate.SOURCE_TIME, now)  # out of range
+    node.last_v3 = _make_estimate(4, FloorEstimate.SOURCE_ACCEL, now)
+    node._publish()
+    assert len(captured) == 1
+    assert captured[0].floor == 4
+    node.destroy_node()
+
+
+def test_v4_publishes_correction_to_v3_when_tag_fresh_and_v3_stationary():
+    # Tag wins; v3 also fresh and stationary -> v4 should publish v1's
+    # floor onto the correction topic so v3 can snap + re-derive bias.
+    node = FloorV4Fusion()
+    captured_main = _capture_published(node, 'pub')
+    captured_corr = _capture_published(node, 'correction_pub')
+    now = node._now_s()
+    node.last_v1 = _make_estimate(4, FloorEstimate.SOURCE_APRILTAG, now)
+    v3 = _make_estimate(2, FloorEstimate.SOURCE_ACCEL, now)
+    v3.moving = False
+    node.last_v3 = v3
+    node._publish()
+    assert len(captured_main) == 1 and captured_main[0].floor == 4
+    assert len(captured_corr) == 1 and captured_corr[0].floor == 4
 
 
 def test_v4_silent_when_no_sources():

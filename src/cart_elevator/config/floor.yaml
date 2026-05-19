@@ -34,9 +34,14 @@ floor_v3_accel:
     starting_floor: 1
     floor_height_m: 3.5
     move_threshold_mss: 0.30
+    v_threshold_ms: 0.20
     start_samples: 10
     stop_samples: 100
     bias_window_s: 5.0
+    bias_var_thr_mss2: 0.01           # rolling-variance gate for stationarity
+    bias_var_window_n: 25             # ~0.25 s @ 100 Hz IMU
+    correction_topic: /elevator/floor_v3_accel/correction
+    correction_max_floor_delta: 2     # reject corrections that jump >2 floors
     publish_rate_hz: 5.0
 
 floor_v4_fusion:
@@ -45,10 +50,13 @@ floor_v4_fusion:
     v2_topic: /elevator/floor_v2_time
     v3_topic: /elevator/floor_v3_accel
     output_topic: /elevator/floor
+    correction_out_topic: /elevator/floor_v3_accel/correction
     tag_max_age_s: 1.5
     time_max_age_s: 5.0
     accel_max_age_s: 5.0
     publish_rate_hz: 5.0
+    n_floors: 5                       # clamp candidates to [1, n_floors]
+    starting_floor: 1                 # fallback ref for disagreement arbitration
 
 fake_elevator_imu:
   ros__parameters:
