@@ -42,10 +42,10 @@ Hold-to-run / restart (2026-05-20):
     True. On a True->False transition we cancel any in-flight Nav2 goal
     so the controller doesn't keep trying to drive into something while
     we're paused. On False->True we re-issue the entry actions of the
-    current state (only idempotent ones: NAV_GOAL, SET_DOCK_TARGET,
-    SET_SAFE_TARGET). MISSION_CMD and PRESS_BUTTON are NOT re-issued —
-    the Rio side is independently gated on the same operator button and
-    will resume its own sequence.
+    current state (NAV_GOAL, SET_DOCK_TARGET, SET_SAFE_TARGET,
+    PRESS_BUTTON, MISSION_CMD). The Rio aborts its press/sequence
+    state on freeze and clears its NT string de-dupe cache, so the
+    re-published value re-triggers a fresh sequence.
   /mission/restart std_msgs/Bool, *edge* — cancel in-flight Nav2,
     clear all one-shot latches on the Snapshot, reset Mission to IDLE.
   require_enable parameter — default True. Set False for the sim
@@ -72,14 +72,20 @@ from cart_elevator.supervisor.mission import (
 
 
 # Action kinds that are safe to re-fire on a disable->enable resume.
-# NAV_GOAL re-plans, SET_DOCK_TARGET re-arms the controller, SET_SAFE_TARGET
-# re-tells the safe gate which floor to watch. The others have side effects
-# (Rio sequences, NT pulses) that we do NOT want to repeat.
+# NAV_GOAL re-plans from current pose. SET_DOCK_TARGET re-arms the dock
+# controller. SET_SAFE_TARGET re-tells the safe gate which floor to watch.
+# PRESS_BUTTON and MISSION_CMD are re-published so the Rio re-starts the
+# corresponding sequence from scratch — needed because the Rio aborts and
+# resets its press/sequence state on its own disable, and de-dupes against
+# the last NT string value. The Rio must clear its lastButton/lastMissionCmd
+# cache on freeze so the same string value triggers a fresh sequence.
 _RESUMABLE_ACTION_KINDS = frozenset({
     ActionKind.NAV_GOAL,
     ActionKind.SET_DOCK_TARGET,
     ActionKind.CLEAR_DOCK_TARGET,
     ActionKind.SET_SAFE_TARGET,
+    ActionKind.PRESS_BUTTON,
+    ActionKind.MISSION_CMD,
 })
 
 import math
