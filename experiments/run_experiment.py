@@ -175,7 +175,7 @@ NO_TAG_SCENARIO = '999:104:0.05'  # tag never visible during a normal recording
 def experiment_imu_bias(out_csv: Path, duration_s: float, trials: int) -> None:
     """How does floor estimate degrade as IMU bias grows? No tag visible —
     isolates pure IMU performance."""
-    sweep = [0.0, 0.05, 0.10, 0.15, 0.20]
+    sweep = [0.0, 0.05, 0.10, 0.20, 0.30, 0.50, 1.00, 2.00]
     rows = []
     total = len(sweep) * trials
     i = 0
