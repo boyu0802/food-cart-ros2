@@ -15,8 +15,9 @@ Watch progress with:
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 
 
 def _arg(name, default):
@@ -31,6 +32,8 @@ def generate_launch_description():
                     '1.5', '0.3', '3.14159265',
                     '30.0', '6.0']
 
+    # CLI overrides for the bits we want to scrub quickly during a sim run.
+    # Everything else (gains, deadbands, velocity clamps) lives in dock.yaml.
     ctrl_keys = ['target_tag_id', 'standoff_x', 'standoff_y']
     ctrl_defaults = ['101', '0.6', '0.0']
 
@@ -38,7 +41,13 @@ def generate_launch_description():
     args += [_arg(k, v) for k, v in zip(ctrl_keys, ctrl_defaults)]
 
     sim_params = {k: LaunchConfiguration(k) for k in sim_keys}
-    ctrl_params = {k: LaunchConfiguration(k) for k in ctrl_keys}
+    # In sim we want the controller boot-enabled (no supervisor to call
+    # SetDockTarget), so force autostart_target=True here.
+    ctrl_overrides = {k: LaunchConfiguration(k) for k in ctrl_keys}
+    ctrl_overrides['autostart_target'] = True
+
+    dock_yaml = PathJoinSubstitution([
+        FindPackageShare('cart_elevator'), 'config', 'dock.yaml'])
 
     return LaunchDescription([
         *args,
@@ -47,5 +56,5 @@ def generate_launch_description():
              parameters=[sim_params]),
         Node(package='cart_elevator', executable='dock_controller',
              name='dock_controller', output='screen',
-             parameters=[ctrl_params]),
+             parameters=[dock_yaml, ctrl_overrides]),
     ])

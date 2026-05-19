@@ -1,0 +1,55 @@
+###############################################################################
+# AprilTag docking controller parameters.
+#
+# Values here are starting points — gains must be re-tuned against the real
+# swerve drivetrain (cart inertia, max accel, latency). Bench-tuning against
+# fake_dock_sim only validates the algorithm, not the gains.
+###############################################################################
+
+dock_controller:
+  ros__parameters:
+    tag_topic: /limelight/tag
+    cmd_topic: /dock/cmd_vel
+    status_topic: /dock/status
+    set_target_srv: /dock/set_target
+
+    # autostart_target=false means the controller boots DISABLED. The
+    # supervisor calls /dock/set_target before each dock phase to
+    # enable it for one alignment, then clears it after. This is the
+    # default for the real bring-up (bringup.launch.py).
+    # dock_test.launch.py overrides this to true so the sim runs
+    # standalone against the placeholder tag below.
+    autostart_target: false
+
+    # Boot/fallback target — only used when autostart_target=true.
+    target_tag_id: 101
+
+    # Target pose: where the tag should appear in the robot frame at full dock.
+    # standoff_x: distance from cart center to tag along robot +x (forward).
+    # standoff_y: lateral offset (0 = centered on tag).
+    # facing_yaw: yaw the cart presents toward the tag at dock; pi = back-in.
+    standoff_x: 0.6
+    standoff_y: 0.0
+    facing_yaw: 3.14159265   # pi rad — back into dock
+
+    # Gains — STARTING POINTS, tune on real cart.
+    # Each is a proportional gain on the corresponding pose error.
+    kp_x: 0.8
+    kp_y: 0.8
+    kp_yaw: 1.2
+
+    # Deadband (errors below this don't drive motion).
+    dead_x: 0.02              # m
+    dead_y: 0.02              # m
+    dead_yaw: 0.035           # rad (~2 deg)
+
+    # Velocity clamps. Set conservative — fake_dock_sim doesn't enforce
+    # swerve dynamics, so real-cart limits will be tighter.
+    max_vx: 0.4               # m/s
+    max_vy: 0.3               # m/s
+    max_omega: 1.0            # rad/s
+
+    # Behavior.
+    lost_timeout: 0.5         # s of no valid detection -> zero velocity
+    align_frames: 8           # consecutive in-deadband frames -> ALIGNED state
+    control_rate_hz: 20.0
