@@ -2,7 +2,6 @@
 
 from cart_elevator.supervisor.mission import (
     Mission, MissionConfig, State, ActionKind, Snapshot,
-    DOOR_OPEN, DOOR_CLOSED,
 )
 
 
@@ -64,31 +63,47 @@ def test_press_floor_button_uses_target_floor_in_payload():
     assert act.payload['button'] == 'floor_3'
 
 
-def test_hallway_door_open_advances_only_when_direction_consistent():
+def test_hallway_door_open_waits_for_safe_to_enter():
     m = Mission(_cfg())
     m.state = State.WAIT_FOR_HALLWAY_DOOR_OPEN
-    # Door OPEN but direction says DOWN — wrong elevator. Don't advance.
-    st, _ = m.step(Snapshot(door_state=DOOR_OPEN, elevator_direction=-1))
+    # Safe gate hasn't said yes yet.
+    st, _ = m.step(Snapshot(safe_to_enter=False))
     assert st == State.WAIT_FOR_HALLWAY_DOOR_OPEN
-    # Door OPEN + UP -> advance.
-    st, _ = m.step(Snapshot(door_state=DOOR_OPEN, elevator_direction=+1))
+    # Gate flips.
+    st, _ = m.step(Snapshot(safe_to_enter=True))
     assert st == State.NAV_INTO_CAB
 
 
-def test_floor_reached_requires_floor_match_AND_door_open_AND_confidence():
+def test_wait_for_hallway_door_open_emits_set_safe_target_for_starting_floor():
+    cfg = MissionConfig(target_floor=4, starting_floor=1,
+                        pickup_tag_id=200, hallway_panel_tag_id=210,
+                        in_cab_panel_tag_id=220, dropoff_tag_id=230)
+    m = Mission(cfg)
+    m.state = State.PRESS_CALL_BUTTON
+    st, act = m.step(Snapshot(press_done=True))
+    assert st == State.WAIT_FOR_HALLWAY_DOOR_OPEN
+    assert act.kind == ActionKind.SET_SAFE_TARGET
+    assert act.payload['floor'] == 1
+
+
+def test_wait_for_floor_reached_emits_set_safe_target_for_destination():
+    cfg = MissionConfig(target_floor=4, starting_floor=1,
+                        pickup_tag_id=200, hallway_panel_tag_id=210,
+                        in_cab_panel_tag_id=220, dropoff_tag_id=230)
+    m = Mission(cfg)
+    m.state = State.PRESS_FLOOR_BUTTON
+    st, act = m.step(Snapshot(press_done=True))
+    assert st == State.WAIT_FOR_FLOOR_REACHED
+    assert act.kind == ActionKind.SET_SAFE_TARGET
+    assert act.payload['floor'] == 4
+
+
+def test_floor_reached_waits_for_safe_to_enter():
     m = Mission(_cfg(target_floor=4))
     m.state = State.WAIT_FOR_FLOOR_REACHED
-    # Floor matches but door still closed — wait.
-    st, _ = m.step(Snapshot(current_floor=4, floor_confidence=0.9,
-                            door_state=DOOR_CLOSED))
+    st, _ = m.step(Snapshot(safe_to_enter=False))
     assert st == State.WAIT_FOR_FLOOR_REACHED
-    # Floor matches and door open but low confidence — still wait.
-    st, _ = m.step(Snapshot(current_floor=4, floor_confidence=0.2,
-                            door_state=DOOR_OPEN))
-    assert st == State.WAIT_FOR_FLOOR_REACHED
-    # All three good -> advance.
-    st, _ = m.step(Snapshot(current_floor=4, floor_confidence=0.9,
-                            door_state=DOOR_OPEN))
+    st, _ = m.step(Snapshot(safe_to_enter=True))
     assert st == State.NAV_OUT_OF_CAB
 
 
@@ -120,13 +135,11 @@ def test_full_happy_path_reaches_done():
         Snapshot(nav_succeeded=True),               # -> DOCK_HALLWAY_CALL
         Snapshot(dock_aligned=True),                # -> PRESS_CALL_BUTTON
         Snapshot(press_done=True),                  # -> WAIT_FOR_HALLWAY_DOOR_OPEN
-        Snapshot(door_state=DOOR_OPEN,
-                 elevator_direction=1),             # -> NAV_INTO_CAB
+        Snapshot(safe_to_enter=True),               # -> NAV_INTO_CAB
         Snapshot(nav_succeeded=True),               # -> DOCK_IN_CAB_BUTTON
         Snapshot(dock_aligned=True),                # -> PRESS_FLOOR_BUTTON
         Snapshot(press_done=True),                  # -> WAIT_FOR_FLOOR_REACHED
-        Snapshot(current_floor=4, floor_confidence=0.9,
-                 door_state=DOOR_OPEN),             # -> NAV_OUT_OF_CAB
+        Snapshot(safe_to_enter=True),               # -> NAV_OUT_OF_CAB
         Snapshot(nav_succeeded=True),               # -> RELOCALIZE_AT_FLOOR
         Snapshot(current_map_floor=4),              # -> NAV_TO_DROPOFF
         Snapshot(nav_succeeded=True),               # -> DOCK_DROPOFF

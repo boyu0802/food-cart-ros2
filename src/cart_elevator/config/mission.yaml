@@ -9,6 +9,7 @@ cart_supervisor:
   ros__parameters:
     tick_rate_hz: 5.0
     target_floor: 4
+    starting_floor: 1     # where the kitchen is — safe gate uses this during hallway WAIT
 
     # Tag IDs — distinct from floor-detector tags (which live at 100+offset).
     pickup_tag_id: 200

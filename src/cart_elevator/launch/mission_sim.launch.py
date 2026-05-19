@@ -26,10 +26,17 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     mission_yaml = PathJoinSubstitution([
         FindPackageShare('cart_elevator'), 'config', 'mission.yaml'])
+    safe_yaml = PathJoinSubstitution([
+        FindPackageShare('cart_elevator'), 'config', 'safe.yaml'])
     return LaunchDescription([
         Node(package='cart_elevator', executable='cart_supervisor',
              name='cart_supervisor', output='screen',
              parameters=[mission_yaml]),
+        # Real safe gate — exercises the full retarget + AND path
+        # against sim_driver-published door/direction/floor inputs.
+        Node(package='cart_elevator', executable='safe_to_enter_gate',
+             name='safe_to_enter_gate', output='screen',
+             parameters=[safe_yaml]),
         Node(package='cart_elevator', executable='mission_sim_driver',
              name='mission_sim_driver', output='screen',
              parameters=[{'target_floor': 4}]),

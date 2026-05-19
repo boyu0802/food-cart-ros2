@@ -105,6 +105,12 @@ class Snapshot:
     elevator_direction: int = 0     # -1 down / 0 unknown / +1 up
     current_map_floor: int = 1      # which floor's map AMCL is currently using
     target_floor: int = 1           # set by mission config
+    # /elevator/safe_to_enter from the safe gate. Single bool that ANDs
+    # (door=OPEN ∧ direction=IDLE ∧ floor=expected ∧ inside_clear) with
+    # freshness. Drives both WAIT_FOR_HALLWAY_DOOR_OPEN and
+    # WAIT_FOR_FLOOR_REACHED — the supervisor retargets the gate
+    # between phases via the SET_SAFE_TARGET action.
+    safe_to_enter: bool = False
 
 
 # --- Action the wrapper should execute when entering a state ---
@@ -116,6 +122,7 @@ class ActionKind(Enum):
     CLEAR_DOCK_TARGET = 'CLEAR_DOCK_TARGET'
     PRESS_BUTTON = 'PRESS_BUTTON'   # NT key to RoboRIO
     SWAP_MAP = 'SWAP_MAP'
+    SET_SAFE_TARGET = 'SET_SAFE_TARGET'  # retarget safe_to_enter_gate
 
 
 @dataclass
@@ -136,6 +143,10 @@ DOOR_CLOSING = 4
 @dataclass
 class MissionConfig:
     target_floor: int = 4
+    # Floor the cart starts on (kitchen). Used to retarget the safe
+    # gate during the hallway WAIT — we're waiting for the elevator
+    # to arrive at THIS floor, not the destination.
+    starting_floor: int = 1
     # Tag IDs. Real values come from yaml at deploy time.
     pickup_tag_id: int = 200
     hallway_panel_tag_id: int = 210
@@ -210,12 +221,10 @@ class Mission:
             return State.WAIT_FOR_HALLWAY_DOOR_OPEN if s.press_done else cur
 
         if cur == State.WAIT_FOR_HALLWAY_DOOR_OPEN:
-            # Door open + we saw an UP arrow on the hall display (or
-            # direction unknown but door is open — degraded path).
-            if s.door_state == DOOR_OPEN:
-                if s.elevator_direction in (1, 0):
-                    return State.NAV_INTO_CAB
-            return cur
+            # Safe gate ANDs door=OPEN, direction=IDLE, floor=starting,
+            # inside_clear=True with freshness. One bool — no inline
+            # reproduction of the AND here.
+            return State.NAV_INTO_CAB if s.safe_to_enter else cur
 
         if cur == State.NAV_INTO_CAB:
             return State.DOCK_IN_CAB_BUTTON if s.nav_succeeded else cur
@@ -225,10 +234,9 @@ class Mission:
             return State.WAIT_FOR_FLOOR_REACHED if s.press_done else cur
 
         if cur == State.WAIT_FOR_FLOOR_REACHED:
-            arrived = (s.current_floor == self.cfg.target_floor
-                       and s.floor_confidence > 0.6
-                       and s.door_state == DOOR_OPEN)
-            return State.NAV_OUT_OF_CAB if arrived else cur
+            # Same safe gate, retargeted to the destination floor by
+            # the SET_SAFE_TARGET action when we entered this state.
+            return State.NAV_OUT_OF_CAB if s.safe_to_enter else cur
 
         if cur == State.NAV_OUT_OF_CAB:
             return State.RELOCALIZE_AT_FLOOR if s.nav_succeeded else cur
@@ -262,6 +270,11 @@ class Mission:
         if st == State.PRESS_CALL_BUTTON:
             return Action(ActionKind.PRESS_BUTTON,
                           {'button': 'call_up'})
+        if st == State.WAIT_FOR_HALLWAY_DOOR_OPEN:
+            # Retarget the safe gate to the floor we're standing on
+            # (we're waiting for a car to arrive HERE).
+            return Action(ActionKind.SET_SAFE_TARGET,
+                          {'floor': c.starting_floor})
         if st == State.NAV_INTO_CAB:
             return Action(ActionKind.NAV_GOAL, {'pose': c.into_cab_pose})
         if st == State.DOCK_IN_CAB_BUTTON:
@@ -270,6 +283,11 @@ class Mission:
         if st == State.PRESS_FLOOR_BUTTON:
             return Action(ActionKind.PRESS_BUTTON,
                           {'button': f'floor_{c.target_floor}'})
+        if st == State.WAIT_FOR_FLOOR_REACHED:
+            # Retarget safe gate to the destination floor — now we
+            # wait for the car to arrive THERE.
+            return Action(ActionKind.SET_SAFE_TARGET,
+                          {'floor': c.target_floor})
         if st == State.NAV_OUT_OF_CAB:
             return Action(ActionKind.NAV_GOAL, {'pose': c.out_of_cab_pose})
         if st == State.RELOCALIZE_AT_FLOOR:
