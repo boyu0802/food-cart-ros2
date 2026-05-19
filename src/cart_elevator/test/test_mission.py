@@ -220,21 +220,26 @@ def test_entry_actions_for_current_state_is_idempotent_for_nav():
     assert resume_acts[0].payload['pose'] == original_pose
 
 
-def test_entry_actions_for_current_state_returns_empty_for_wait_states():
-    # WAIT_LOADED's entry action is MISSION_CMD 'load', which is NOT
-    # in the wrapper's resumable set — but the *pure* layer still emits
-    # it. The wrapper is responsible for filtering. This test pins the
-    # pure-layer contract: WAIT_FOR_HALLWAY_DOOR_OPEN emits SET_SAFE_TARGET
-    # (resumable), while pure WAIT_LOADED emits MISSION_CMD (not resumable).
+def test_entry_actions_for_current_state_re_emits_for_each_state():
+    # The wrapper uses this on a disable->enable transition to re-issue
+    # actions whose controllers we cancelled (Nav2) or whose Rio-side
+    # state was aborted (press, lift+pusher). The Rio clears its NT
+    # string de-dupe on freeze so re-publishing the same value re-triggers
+    # the sequence. Pin the per-state mapping here so the wrapper's
+    # _RESUMABLE_ACTION_KINDS filter stays meaningful.
     m = Mission(_cfg())
     m.state = State.WAIT_FOR_HALLWAY_DOOR_OPEN
-    acts = m.entry_actions_for_current_state()
-    assert _kinds(acts) == [ActionKind.SET_SAFE_TARGET]
+    assert _kinds(m.entry_actions_for_current_state()) == [ActionKind.SET_SAFE_TARGET]
 
     m.state = State.WAIT_LOADED
     acts = m.entry_actions_for_current_state()
     assert _kinds(acts) == [ActionKind.MISSION_CMD]
     assert acts[0].payload['cmd'] == 'load'
+
+    m.state = State.PRESS_CALL_BUTTON
+    acts = m.entry_actions_for_current_state()
+    assert _kinds(acts) == [ActionKind.PRESS_BUTTON]
+    assert acts[0].payload['button'] == 'call_up'
 
 
 def test_reset_then_start_runs_clean_mission():
