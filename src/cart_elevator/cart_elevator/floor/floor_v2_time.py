@@ -36,6 +36,7 @@ class FloorV2Time(Node):
             ('output_topic', '/elevator/floor_v2_time'),
             ('starting_floor', 1),
             ('elevator_speed_m_s', 1.5),   # typical commercial elevator
+            ('ramp_time_s', 1.5),          # accel & decel each take ~this long
             ('floor_height_m', 3.5),       # typical floor-to-floor spacing
             ('move_threshold_mss', 0.30),  # |accel_z - g| above this = "active"
             ('start_samples', 10),         # ~0.1s at 100Hz
@@ -47,6 +48,7 @@ class FloorV2Time(Node):
         self.output_topic = gp('output_topic')
         self.starting_floor = int(gp('starting_floor'))
         self.speed = float(gp('elevator_speed_m_s'))
+        self.ramp_time = float(gp('ramp_time_s'))
         self.floor_h = float(gp('floor_height_m'))
         self.move_thr = float(gp('move_threshold_mss'))
         self.start_samples = int(gp('start_samples'))
@@ -61,6 +63,10 @@ class FloorV2Time(Node):
         self.active_streak = 0
         self.idle_streak = 0
         self.last_initial_signed_dev = 0.0  # for direction inference
+        # Trip is only considered complete after we've observed an accel
+        # pulse opposite to the start direction (i.e. the decel phase).
+        # Without this, cruise (a_z ~ 0) gets mistaken for trip-end.
+        self.saw_opposite_pulse = False
 
         self.create_subscription(Imu, self.imu_topic, self._on_imu, 50)
         self.pub = self.create_publisher(FloorEstimate, self.output_topic, 10)
@@ -86,6 +92,7 @@ class FloorV2Time(Node):
                     self.direction = 1 if signed_dev > 0 else -1
                     self.active_streak = 0
                     self.idle_streak = 0
+                    self.saw_opposite_pulse = False
                     self.get_logger().info(
                         f'trip start: dir={"UP" if self.direction>0 else "DOWN"}')
             else:
@@ -94,11 +101,11 @@ class FloorV2Time(Node):
             # currently moving
             if not active_now:
                 self.idle_streak += 1
-                if self.idle_streak >= self.stop_samples:
+                if self.idle_streak >= self.stop_samples and self.saw_opposite_pulse:
                     duration = self._now_s() - self.trip_start_t - (
                         self.stop_samples / 100.0)  # subtract the idle window
                     duration = max(0.0, duration)
-                    distance = duration * self.speed
+                    distance = self.speed * max(0.0, duration - self.ramp_time)
                     floors_changed = max(1, int(round(distance / self.floor_h)))
                     self.current_floor += self.direction * floors_changed
                     self.get_logger().info(
@@ -108,8 +115,12 @@ class FloorV2Time(Node):
                     self.is_moving = False
                     self.direction = 0
                     self.idle_streak = 0
+                    self.saw_opposite_pulse = False
             else:
                 self.idle_streak = 0
+                # Opposite-sign active pulse = decel phase observed.
+                if signed_dev * self.direction < 0:
+                    self.saw_opposite_pulse = True
 
     def _publish(self) -> None:
         out = FloorEstimate()

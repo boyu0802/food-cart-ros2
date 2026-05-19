@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""floor_v3_accel — TERTIARY floor detector (Pigeon physics-based).
+"""floor_v3_accel — TERTIARY floor detector (software accel integration).
 
 Double-integrates IMU accel_z to recover vertical velocity and position
 during an elevator trip. At motion end, snaps the integrated position to
 the nearest multiple of floor_height_m and updates the current floor.
+
+Note: the IMU itself (Pigeon 2 via NT bridge, or D455) only publishes raw
+linear_acceleration — neither hardware integrates accel to vertical
+position. This node does the double-integration in software here on the Pi.
 
 Compared to floor_v2_time, this DOESN'T assume a calibrated constant
 elevator speed — it derives the trip distance from physics. But it suffers
@@ -35,6 +39,7 @@ class FloorV3Accel(Node):
             ('starting_floor', 1),
             ('floor_height_m', 3.5),
             ('move_threshold_mss', 0.30),
+            ('v_threshold_ms', 0.20),
             ('start_samples', 10),
             ('stop_samples', 100),
             ('bias_window_s', 5.0),
@@ -46,6 +51,7 @@ class FloorV3Accel(Node):
         self.starting_floor = int(gp('starting_floor'))
         self.floor_h = float(gp('floor_height_m'))
         self.move_thr = float(gp('move_threshold_mss'))
+        self.v_thr = float(gp('v_threshold_ms'))
         self.start_samples = int(gp('start_samples'))
         self.stop_samples = int(gp('stop_samples'))
         self.bias_window = float(gp('bias_window_s'))
@@ -117,7 +123,11 @@ class FloorV3Accel(Node):
                     self.z += self.v_z * dt
             self.last_t = now
 
-            if not active_now:
+            # Use integrated velocity (not raw accel) for stop detection.
+            # During cruise a_z ~ 0 but v_z stays at cruise speed, so this
+            # bridges the cruise phase that would otherwise look like a stop.
+            stopped_now = abs(self.v_z) < self.v_thr
+            if stopped_now:
                 self.idle_streak += 1
                 if self.idle_streak >= self.stop_samples:
                     # On stop: snap integrated z to nearest floor multiple.

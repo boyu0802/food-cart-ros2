@@ -18,3 +18,9 @@ networktables.json
 .vscode/
 .idea/
 *.swp
+
+# Local agent state
+.claude/
+
+# Generated experiment artifacts (regenerable, ~hundreds of MB)
+experiments/degraded/
