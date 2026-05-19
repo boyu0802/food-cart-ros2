@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Int32
 from cart_elevator_msgs.msg import DoorState, ElevatorDirection, FloorEstimate
 
 
@@ -46,6 +46,10 @@ class SafeToEnterGate(Node):
             ('floor_topic', '/elevator/floor'),
             ('inside_clear_topic', '/elevator/inside_clear'),
             ('output_topic', '/elevator/safe_to_enter'),
+            # Topic the supervisor publishes on to retarget the gate
+            # between mission phases (hallway WAIT uses starting floor,
+            # in-cab WAIT uses destination floor).
+            ('target_floor_topic', '/safe_to_enter/target_floor'),
             ('target_floor', 1),
             ('max_age_s', 2.0),
             ('min_confidence', 0.50),
@@ -73,6 +77,8 @@ class SafeToEnterGate(Node):
                                  self._on_floor, 10)
         self.create_subscription(Bool, gp('inside_clear_topic'),
                                  self._on_inside, 10)
+        self.create_subscription(Int32, gp('target_floor_topic'),
+                                 self._on_target_floor, 10)
         self.pub = self.create_publisher(Bool, gp('output_topic'), 10)
         self.create_timer(1.0 / float(gp('publish_rate_hz')), self._publish)
         self.get_logger().info(
@@ -92,6 +98,13 @@ class SafeToEnterGate(Node):
     def _on_inside(self, msg):
         self.last_inside_clear = bool(msg.data)
         self.last_inside_t = self._now_s()
+
+    def _on_target_floor(self, msg: Int32) -> None:
+        new = int(msg.data)
+        if new != self.target_floor:
+            self.get_logger().info(
+                f'target_floor: {self.target_floor} -> {new}')
+            self.target_floor = new
 
     def _fresh(self, msg, max_age=None) -> bool:
         if msg is None:

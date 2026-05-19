@@ -60,6 +60,16 @@ class MissionSimDriver(Node):
         self._scheduled: list = []
         self._last_press: str = ''
 
+        # Background-scene state. The safe gate needs door / direction /
+        # floor to be FRESH AND at the right values throughout a WAIT
+        # phase, not one-shot pulses. _publish_background reads these
+        # and emits at 2 Hz; scheduled events flip them.
+        self._scene_door = DoorState.CLOSED
+        self._scene_direction = ElevatorDirection.DIRECTION_UNKNOWN
+        self._scene_dir_conf = 0.0
+        self._scene_floor = 1
+        self._scene_floor_conf = 0.0
+
         # Wires.
         self.create_subscription(String, '/mission/state', self._on_state, 10)
         self.create_subscription(String, '/elevator/press_button',
@@ -101,20 +111,30 @@ class MissionSimDriver(Node):
     # ---- background "world is calm" publishers ----
 
     def _publish_background(self) -> None:
-        # Hallway/lobby default: door closed, no elevator arriving yet,
-        # floor 1 by default.
+        # Continuously re-publish the current scene values so the safe
+        # gate's freshness checks pass throughout each WAIT phase.
+        now = self.get_clock().now().to_msg()
+
         ds = DoorState()
-        ds.header.stamp = self.get_clock().now().to_msg()
-        ds.state = DoorState.CLOSED
+        ds.header.stamp = now
+        ds.state = self._scene_door
         ds.confidence = 0.9
-        ds.median_depth_m = 0.30
+        ds.median_depth_m = 0.30 if self._scene_door == DoorState.CLOSED else 2.0
         self.door_pub.publish(ds)
 
         ed = ElevatorDirection()
-        ed.header.stamp = self.get_clock().now().to_msg()
-        ed.direction = 0
-        ed.confidence = 0.0
+        ed.header.stamp = now
+        ed.direction = self._scene_direction
+        ed.confidence = self._scene_dir_conf
         self.dir_pub.publish(ed)
+
+        if self._scene_floor_conf > 0.0:
+            f = FloorEstimate()
+            f.header.stamp = now
+            f.floor = self._scene_floor
+            f.confidence = self._scene_floor_conf
+            f.source = FloorEstimate.SOURCE_FUSION
+            self.floor_pub.publish(f)
 
     # ---- state change -> schedule a canned response ----
 
@@ -138,10 +158,25 @@ class MissionSimDriver(Node):
             self._schedule(now + self.press_delay,
                            lambda: self._publish_bool(self.unloaded_pub))
         elif state == 'WAIT_FOR_HALLWAY_DOOR_OPEN':
-            self._schedule(now + self.door_open_delay, self._publish_door_open_up)
+            # Make sure the gate sees floor 1 with confidence before
+            # the door opens, otherwise it'll go safe instantly when
+            # the rest of the scene flips.
+            self._scene_floor = 1
+            self._scene_floor_conf = 0.9
+            self._schedule(now + self.door_open_delay, self._open_door_at_floor)
         elif state == 'WAIT_FOR_FLOOR_REACHED':
-            self._schedule(now + self.floor_settle_delay,
-                           self._publish_floor_arrived)
+            # Trip in progress: door closes during ride, floor estimate
+            # walks up via v3/v4 fusion in the real cart. For sim we
+            # flip directly after a delay.
+            self._scene_door = DoorState.CLOSED
+            self._scene_direction = ElevatorDirection.DIRECTION_UP
+            self._scene_dir_conf = 0.7
+            self._schedule(now + self.floor_settle_delay, self._arrive_at_floor)
+        elif state == 'NAV_INTO_CAB' or state == 'NAV_TO_HALLWAY_CALL':
+            # Door closes once we start moving away from / into the cab.
+            self._scene_door = DoorState.CLOSED
+            self._scene_direction = ElevatorDirection.DIRECTION_UNKNOWN
+            self._scene_dir_conf = 0.0
 
     def _on_press(self, msg: String) -> None:
         self._last_press = msg.data
@@ -165,32 +200,24 @@ class MissionSimDriver(Node):
         m.state = DockStatus.ALIGNED
         self.dock_pub.publish(m)
 
-    def _publish_door_open_up(self) -> None:
-        ds = DoorState()
-        ds.header.stamp = self.get_clock().now().to_msg()
-        ds.state = DoorState.OPEN
-        ds.confidence = 0.9
-        ds.median_depth_m = 2.0
-        self.door_pub.publish(ds)
-        ed = ElevatorDirection()
-        ed.header.stamp = self.get_clock().now().to_msg()
-        ed.direction = 1
-        ed.confidence = 0.9
-        self.dir_pub.publish(ed)
+    def _open_door_at_floor(self) -> None:
+        # Car has arrived: direction goes IDLE (car stopped), door
+        # opens. The safe gate ANDs floor+direction+door — all three
+        # need to be true at once with freshness, so flip the scene
+        # and let _publish_background re-emit them.
+        self._scene_door = DoorState.OPEN
+        self._scene_direction = ElevatorDirection.DIRECTION_IDLE
+        self._scene_dir_conf = 0.9
 
-    def _publish_floor_arrived(self) -> None:
-        f = FloorEstimate()
-        f.header.stamp = self.get_clock().now().to_msg()
-        f.floor = self.target_floor
-        f.confidence = 0.9
-        f.source = FloorEstimate.SOURCE_FUSION
-        self.floor_pub.publish(f)
-        ds = DoorState()
-        ds.header.stamp = self.get_clock().now().to_msg()
-        ds.state = DoorState.OPEN
-        ds.confidence = 0.9
-        ds.median_depth_m = 2.0
-        self.door_pub.publish(ds)
+    def _arrive_at_floor(self) -> None:
+        # Trip ended: floor estimate jumps to target, direction goes
+        # IDLE, door opens. Safe gate (now targeting destination
+        # floor per SET_SAFE_TARGET) sees all three and advances.
+        self._scene_floor = self.target_floor
+        self._scene_floor_conf = 0.9
+        self._scene_door = DoorState.OPEN
+        self._scene_direction = ElevatorDirection.DIRECTION_IDLE
+        self._scene_dir_conf = 0.9
 
     def _publish_bool(self, pub) -> None:
         b = Bool()

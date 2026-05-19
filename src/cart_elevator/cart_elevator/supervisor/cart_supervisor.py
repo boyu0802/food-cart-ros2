@@ -25,6 +25,7 @@ Inputs (Snapshot):
   /mission/unloaded       -> std_msgs/Bool  -> unloaded
   /elevator/press_done    -> std_msgs/Bool  -> press_done (one-shot)
   /map/current_floor      -> std_msgs/Int32 -> current_map_floor
+  /elevator/safe_to_enter -> std_msgs/Bool  -> safe_to_enter
   Nav2 action goal callback -> nav_succeeded / nav_failed
 
 Each one-shot input (start, loaded, unloaded, press_done) is consumed
@@ -65,6 +66,7 @@ class CartSupervisor(Node):
         self.declare_parameters(namespace='', parameters=[
             ('tick_rate_hz', 5.0),
             ('target_floor', 4),
+            ('starting_floor', 1),
             ('pickup_tag_id', 200),
             ('hallway_panel_tag_id', 210),
             ('in_cab_panel_tag_id', 220),
@@ -93,6 +95,7 @@ class CartSupervisor(Node):
 
         cfg = MissionConfig(
             target_floor=int(gp('target_floor')),
+            starting_floor=int(gp('starting_floor')),
             pickup_tag_id=int(gp('pickup_tag_id')),
             hallway_panel_tag_id=int(gp('hallway_panel_tag_id')),
             in_cab_panel_tag_id=int(gp('in_cab_panel_tag_id')),
@@ -156,12 +159,17 @@ class CartSupervisor(Node):
                                  self._on_press_done, 10)
         self.create_subscription(Int32, '/map/current_floor',
                                  self._on_current_floor, 10)
+        self.create_subscription(Bool, '/elevator/safe_to_enter',
+                                 self._on_safe_to_enter, 10)
 
         # ---- Action / service / publisher clients for the side effects ----
         self.nav_client = ActionClient(self, NavigateToPose, '/navigate_to_pose')
         self.dock_target_client = self.create_client(SetDockTarget, '/dock/set_target')
         self.press_pub = self.create_publisher(String, '/elevator/press_button', 5)
         self.swap_map_pub = self.create_publisher(Int32, '/map/swap_floor', 5)
+        # Retarget the safe gate before each boarding WAIT phase.
+        self.safe_target_pub = self.create_publisher(
+            Int32, '/safe_to_enter/target_floor', 5)
         self.initpose_pub = self.create_publisher(
             PoseWithCovarianceStamped, '/initialpose', 5)
         self.state_pub = self.create_publisher(String, '/mission/state', 5)
@@ -208,6 +216,12 @@ class CartSupervisor(Node):
         # Published by map_swap_node after AMCL is re-initialized for
         # the new floor. Drives the RELOCALIZE_AT_FLOOR transition.
         self.snap.current_map_floor = int(msg.data)
+
+    def _on_safe_to_enter(self, msg: Bool) -> None:
+        # Continuous boolean from safe_to_enter_gate. Level-triggered:
+        # we don't latch — the supervisor advances exactly when this
+        # is true at tick time, regardless of how long it's been so.
+        self.snap.safe_to_enter = bool(msg.data)
 
     # ----- tick -----
 
@@ -264,6 +278,8 @@ class CartSupervisor(Node):
             self._press_button(action.payload['button'])
         elif action.kind == ActionKind.SWAP_MAP:
             self._swap_map(action.payload['floor'])
+        elif action.kind == ActionKind.SET_SAFE_TARGET:
+            self._set_safe_target(action.payload['floor'])
 
     def _send_nav_goal(self, pose) -> None:
         frame_id, x, y, yaw = pose
@@ -358,6 +374,17 @@ class CartSupervisor(Node):
         msg.data = button
         self.press_pub.publish(msg)
         self.get_logger().info(f'press: {button} (waiting on /elevator/press_done)')
+
+    def _set_safe_target(self, floor: int) -> None:
+        # Tell the safe gate which floor to expect. Also pre-clear the
+        # cached safe_to_enter so the BT doesn't advance on a stale
+        # True from the *previous* WAIT phase (where the gate was
+        # checking a different floor).
+        self.snap.safe_to_enter = False
+        m = Int32()
+        m.data = int(floor)
+        self.safe_target_pub.publish(m)
+        self.get_logger().info(f'safe gate: target_floor -> {floor}')
 
     def _swap_map(self, floor: int) -> None:
         # Publish the target floor; map_swap_node owns the rest:
