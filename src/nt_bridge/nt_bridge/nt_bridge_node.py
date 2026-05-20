@@ -5,6 +5,8 @@ Five flows:
   ROS2  /cmd_vel          ->  NT  Nav/cmd/{vx,vy,omega,heartbeat,timestamp}
   NT    Robot/odom/*      ->  ROS2 nav_msgs/Odometry on /odom (+ optional TF)
   NT    Robot/imu/*       ->  ROS2 sensor_msgs/Imu on /imu
+                              (yaw, yaw_rate, accel_x, accel_y, accel_z; accel_z
+                               carries gravity and feeds floor_v3_accel)
   NT    limelight/{tv,tid,tx,ty,ta,targetpose_robotspace}
                           ->  ROS2 cart_elevator_msgs/TagDetection on /limelight/tag
 
@@ -131,6 +133,7 @@ class NtBridge(Node):
             ('yaw_variance', 0.01),
             ('yaw_rate_variance', 0.001),
             ('accel_xy_variance', 0.1),
+            ('accel_z_variance', 0.1),
         ])
         gp = lambda n: self.get_parameter(n).value
 
@@ -193,6 +196,10 @@ class NtBridge(Node):
             self._sub_imu_yaw_rate = imu_table.getDoubleTopic('yaw_rate').subscribe(0.0)
             self._sub_imu_accel_x = imu_table.getDoubleTopic('accel_x').subscribe(0.0)
             self._sub_imu_accel_y = imu_table.getDoubleTopic('accel_y').subscribe(0.0)
+            # accel_z carries gravity (~9.81 at rest); floor_v3_accel
+            # double-integrates it. Sentinel of GRAVITY so a missing NT key
+            # reads as "stationary" rather than a spurious -g downward kick.
+            self._sub_imu_accel_z = imu_table.getDoubleTopic('accel_z').subscribe(9.81)
             self._imu_pub = self.create_publisher(Imu, gp('imu_topic'), 10)
             rate = float(gp('imu_publish_rate'))
             self.create_timer(1.0 / rate, self._publish_imu)
@@ -364,11 +371,13 @@ class NtBridge(Node):
         yaw_rate = self._sub_imu_yaw_rate.get()
         ax = self._sub_imu_accel_x.get()
         ay = self._sub_imu_accel_y.get()
+        az = self._sub_imu_accel_z.get()
 
         qx, qy, qz, qw = yaw_to_quat(yaw)
         yaw_var = float(self.get_parameter('yaw_variance').value)
         yaw_rate_var = float(self.get_parameter('yaw_rate_variance').value)
         accel_var = float(self.get_parameter('accel_xy_variance').value)
+        accel_z_var = float(self.get_parameter('accel_z_variance').value)
 
         msg = Imu()
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -391,10 +400,11 @@ class NtBridge(Node):
         ]
         msg.linear_acceleration.x = ax
         msg.linear_acceleration.y = ay
+        msg.linear_acceleration.z = az
         msg.linear_acceleration_covariance = [
             accel_var, 0.0, 0.0,
             0.0, accel_var, 0.0,
-            0.0, 0.0, LARGE_COV,
+            0.0, 0.0, accel_z_var,
         ]
         self._imu_pub.publish(msg)
 
