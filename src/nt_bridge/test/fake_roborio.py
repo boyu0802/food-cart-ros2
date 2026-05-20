@@ -49,6 +49,7 @@ def main() -> None:
     imu_yaw_rate = imu.getDoubleTopic('yaw_rate').publish()
     imu_ax = imu.getDoubleTopic('accel_x').publish()
     imu_ay = imu.getDoubleTopic('accel_y').publish()
+    imu_az = imu.getDoubleTopic('accel_z').publish()
 
     # circle params: radius 2 m, angular rate 0.5 rad/s
     R, w = 2.0, 0.5
@@ -72,6 +73,7 @@ def main() -> None:
             imu_yaw_rate.set(w)
             imu_ax.set(0.0)
             imu_ay.set(R * w * w)  # centripetal accel magnitude
+            imu_az.set(9.81)       # flat ground: just gravity, no vertical motion
 
             now = time.monotonic()
             if now - last_print >= 0.2:
