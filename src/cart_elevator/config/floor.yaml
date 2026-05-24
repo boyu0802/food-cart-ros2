@@ -9,7 +9,7 @@ floor_v1_apriltag:
   ros__parameters:
     tag_topic: /limelight/tag
     output_topic: /elevator/floor_v1_apriltag
-    floor_tag_id_offset: 100      # tag 101 = floor 1, 102 = floor 2, ...
+    floor_tag_id_offset: 0      # tag 101 = floor 1, 102 = floor 2, ...
     min_area: 0.005
     full_conf_area: 0.05
     confidence_floor: 0.70
@@ -20,11 +20,16 @@ floor_v2_time:
     imu_topic: /imu
     output_topic: /elevator/floor_v2_time
     starting_floor: 1
-    elevator_speed_m_s: 1.5       # PLACEHOLDER — calibrate vs real elevator
-    floor_height_m: 3.5           # PLACEHOLDER
+    elevator_speed_m_s: 1.1       # PLACEHOLDER — calibrate vs real elevator
+    floor_height_m: 3.8           # PLACEHOLDER
     move_threshold_mss: 0.30
     start_samples: 10
     stop_samples: 100
+    # Fallback stop if the decel pulse is too gentle to cross move_threshold
+    # (seen on real 1-floor trips: decel peaked ~0.29 < 0.30 and v2 hung).
+    # Must exceed the longest continuous cruise-quiet (~max_floors*floor_h/
+    # speed); 15s clears a 4-floor trip in this 5-floor building.
+    force_stop_samples: 1500
     publish_rate_hz: 5.0
 
 floor_v3_accel:
@@ -32,11 +37,12 @@ floor_v3_accel:
     imu_topic: /imu
     output_topic: /elevator/floor_v3_accel
     starting_floor: 1
-    floor_height_m: 3.5
+    floor_height_m: 3.8
     move_threshold_mss: 0.30
-    v_threshold_ms: 0.20
+    v_threshold_ms: 0.20             # retained for compat; stop no longer uses v_z
     start_samples: 10
     stop_samples: 100
+    force_stop_samples: 1500         # fallback stop; see floor_v2_time note above
     bias_window_s: 5.0
     bias_var_thr_mss2: 0.01           # rolling-variance gate for stationarity
     bias_var_window_n: 25             # ~0.25 s @ 100 Hz IMU
@@ -59,6 +65,7 @@ floor_v4_fusion:
     starting_floor: 1                 # fallback ref for disagreement arbitration
 
 fake_elevator_imu:
+
   ros__parameters:
     imu_topic: /imu
     publish_rate_hz: 100.0

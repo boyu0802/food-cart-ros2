@@ -17,6 +17,15 @@ This directory contains the floor-detector ablation harness and the raw data fee
 
 This is the "before" data for the in-progress fix work (A1: variance-gated bias estimator in v3; B3: real cross-checking v4 that clamps to building bounds and uses v1 to correct v3 when the elevator is stationary).
 
+**First real-elevator field test** (2026-05-24, bag `elevator_ride_0524_1617`, full analysis in [`findings/elevator_field_test_0524.md`](findings/elevator_field_test_0524.md))
+
+- **First run on a real elevator** (5-floor school building, 3.8 m floor pitch, ~1.1 m/s) instead of `fake_imu`. z-accel from the RoboRIO Pigeon 2 over the NT bridge.
+- **Two new failure modes, both fixed in the same change:**
+  - **v3_accel** latched a never-ending phantom trip and ran to **floor −35** — a ~0.01 m/s² residual bias integrated for 134 s pushed `v_z` past the stop threshold permanently, so the old `|v_z| < v_threshold_ms` stop never re-fired.
+  - **v2_time** hung at floor −1 for the last ~28 s: a gentle 1-floor decel peaked at 0.294 m/s² (< `move_thr` 0.30), so its `saw_opposite_pulse` gate never armed.
+- **v4_fusion held**: settled the correct floor on every trip despite v3 at −35 — the `[1, n_floors]` range clamp dropped the runaway candidate. Real-data confirmation of the B3 design.
+- **Fix:** both detectors now stop on **acceleration returning to baseline** (gated by a seen decel pulse, with a `force_stop_samples` fallback); v3's integrated-velocity stop is retired. Validated by replaying the bag (runaway gone, hang gone) + 5 new regression tests.
+
 ## How to read `results/imu_bias.csv`
 
 | column | meaning |
@@ -36,8 +45,8 @@ This is the "before" data for the in-progress fix work (A1: variance-gated bias 
 All in `src/cart_elevator/cart_elevator/floor/`.
 
 - **`floor_v1_apriltag.py`** — reads floor-labeled AprilTag detections from the Limelight bridge. Authoritative when a tag is visible; silent otherwise.
-- **`floor_v2_time.py`** — detects trip start/stop from accel_z magnitude, then estimates floors as `(duration - ramp_time) × cruise_speed / floor_height`. Subtracting `ramp_time` corrects for the over-count you'd get if you naively assumed cruise speed during the accel/decel ramps.
-- **`floor_v3_accel.py`** — double-integrates accel_z (with stationary-period bias estimation) to recover position. Stop condition is `|v_z| < v_threshold_ms` (default 0.20 m/s) — using velocity instead of raw accel bridges the cruise phase, which would otherwise look like a stop because `a_z ≈ 0` during cruise.
+- **`floor_v2_time.py`** — detects trip start/stop from accel_z magnitude, then estimates floors as `(duration - ramp_time) × cruise_speed / floor_height`. Subtracting `ramp_time` corrects for the over-count you'd get if you naively assumed cruise speed during the accel/decel ramps. Stops when accel goes quiet after a seen decel pulse (`saw_opposite_pulse`), with a `force_stop_samples` fallback for gentle decels that never cross `move_thr` (added 2026-05-24 — see [`findings/elevator_field_test_0524.md`](findings/elevator_field_test_0524.md)).
+- **`floor_v3_accel.py`** — double-integrates accel_z (with stationary-period bias estimation) to recover position. **Stop condition keys off acceleration returning to baseline** (`|a_z| < move_thr` for `stop_samples`), gated by a seen decel pulse so the cruise phase isn't mistaken for a stop, plus a `force_stop_samples` fallback. (Before 2026-05-24 it used `|v_z| < v_threshold_ms`, which ran away on real data when a tiny residual bias drifted the integrated velocity — see [`findings/elevator_field_test_0524.md`](findings/elevator_field_test_0524.md). `v_threshold_ms` is retained only for config compat.)
 - **`floor_v4_fusion.py`** — confidence-weighted fusion of v1/v2/v3.
 
 ## How the sweep was generated
