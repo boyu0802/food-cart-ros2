@@ -126,6 +126,36 @@ def test_v2_detects_motion_stop_and_updates_floor():
     node.destroy_node()
 
 
+def test_v2_keeps_moving_during_cruise_without_decel():
+    # Quiet cruise with no decel pulse and below force_stop_samples: v2 must
+    # stay "moving" so a multi-floor trip isn't cut short mid-cruise.
+    node = FloorV2Time()
+    for _ in range(node.start_samples + 5):
+        node._on_imu(_make_imu(GRAVITY + 1.0))
+    assert node.is_moving
+    for _ in range(node.stop_samples + 5):
+        node._on_imu(_make_imu(GRAVITY))
+    assert node.is_moving
+    node.destroy_node()
+
+
+def test_v2_force_stops_on_gentle_decel():
+    # Regression for the 2026-05-24 field hang: a 1-floor decel peaked at 0.294
+    # m/s^2 (< move_thr 0.30), so saw_opposite_pulse never armed and v2 hung
+    # "moving" for the rest of the ride. The force-stop fallback must end the
+    # trip after a long quiet even without the decel pulse.
+    node = FloorV2Time()
+    node.force_stop_samples = 30
+    for _ in range(node.start_samples + 5):
+        node._on_imu(_make_imu(GRAVITY + 1.0))
+    assert node.is_moving
+    node.trip_start_t = node._now_s() - 3.0
+    for _ in range(node.force_stop_samples + 5):  # quiet, NO decel pulse
+        node._on_imu(_make_imu(GRAVITY))
+    assert not node.is_moving
+    node.destroy_node()
+
+
 # ---------- v3: accel ----------
 
 def test_v3_bias_estimation_when_stationary():
@@ -140,10 +170,13 @@ def test_v3_bias_estimation_when_stationary():
 def test_v3_integrates_and_snaps_to_floor():
     node = FloorV3Accel()
     # bias = 0, start at floor 1
-    # Feed accel ramp to trigger motion start
+    # Feed accel ramp to trigger motion start (up)
     for _ in range(node.start_samples + 5):
         node._on_imu(_make_imu(GRAVITY + 1.0))
     assert node.is_moving
+    # Decel pulse (opposite sign) so the accel-quiet stop is allowed to fire.
+    for _ in range(node.start_samples + 5):
+        node._on_imu(_make_imu(GRAVITY - 1.0))
     # Force integrator to a value that should snap to ~+1 floor (3.5m)
     node.z = 3.4
     # Stop: feed quiescent samples
@@ -151,6 +184,51 @@ def test_v3_integrates_and_snaps_to_floor():
         node._on_imu(_make_imu(GRAVITY))
     assert not node.is_moving
     assert node.current_floor == 2  # 1 + round(3.4/3.5) = 1 + 1
+    node.destroy_node()
+
+
+def test_v3_stops_on_quiet_accel_even_if_velocity_drifted():
+    # Regression for the 2026-05-24 field runaway: a tiny residual bias drove
+    # the integrated velocity past v_threshold and the old gate never re-fired,
+    # so v3 ran to floor -35 in a phantom trip. Stop now keys off acceleration,
+    # so a drifted v_z must NOT keep it "moving".
+    node = FloorV3Accel()
+    for _ in range(node.start_samples + 5):
+        node._on_imu(_make_imu(GRAVITY + 1.0))
+    assert node.is_moving
+    node.v_z = 5.0  # simulate accumulated velocity drift
+    for _ in range(node.start_samples + 5):       # decel pulse arms the gate
+        node._on_imu(_make_imu(GRAVITY - 1.0))
+    for _ in range(node.stop_samples + 5):        # quiet accel -> must stop
+        node._on_imu(_make_imu(GRAVITY))
+    assert not node.is_moving
+    node.destroy_node()
+
+
+def test_v3_does_not_stop_during_cruise_without_decel():
+    # Cruise: accel ~0 (quiet) but no decel pulse yet. v3 must keep moving,
+    # else multi-floor trips would falsely stop mid-cruise.
+    node = FloorV3Accel()
+    for _ in range(node.start_samples + 5):
+        node._on_imu(_make_imu(GRAVITY + 1.0))
+    assert node.is_moving
+    for _ in range(node.stop_samples + 5):        # quiet, < force_stop, no decel
+        node._on_imu(_make_imu(GRAVITY))
+    assert node.is_moving
+    node.destroy_node()
+
+
+def test_v3_force_stops_when_decel_pulse_missed():
+    # Gentle short trip whose decel never crosses move_thr: the force-stop
+    # fallback must end the trip instead of integrating forever.
+    node = FloorV3Accel()
+    node.force_stop_samples = 30
+    for _ in range(node.start_samples + 5):
+        node._on_imu(_make_imu(GRAVITY + 1.0))
+    assert node.is_moving
+    for _ in range(node.force_stop_samples + 5):  # quiet, no decel pulse
+        node._on_imu(_make_imu(GRAVITY))
+    assert not node.is_moving
     node.destroy_node()
 
 

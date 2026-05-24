@@ -36,11 +36,12 @@ class FloorV2Time(Node):
             ('output_topic', '/elevator/floor_v2_time'),
             ('starting_floor', 1),
             ('elevator_speed_m_s', 1.5),   # typical commercial elevator
-            ('ramp_time_s', 1.5),          # accel & decel each take ~this long
+            ('ramp_time_s', 2.1),          # accel & decel each take ~this long
             ('floor_height_m', 3.5),       # typical floor-to-floor spacing
             ('move_threshold_mss', 0.30),  # |accel_z - g| above this = "active"
             ('start_samples', 10),         # ~0.1s at 100Hz
             ('stop_samples', 100),         # ~1.0s at 100Hz
+            ('force_stop_samples', 1500),  # ~15s: fallback stop if decel pulse missed
             ('publish_rate_hz', 5.0),
         ])
         gp = lambda n: self.get_parameter(n).value
@@ -53,6 +54,7 @@ class FloorV2Time(Node):
         self.move_thr = float(gp('move_threshold_mss'))
         self.start_samples = int(gp('start_samples'))
         self.stop_samples = int(gp('stop_samples'))
+        self.force_stop_samples = int(gp('force_stop_samples'))
         publish_rate = float(gp('publish_rate_hz'))
 
         # State
@@ -101,17 +103,29 @@ class FloorV2Time(Node):
             # currently moving
             if not active_now:
                 self.idle_streak += 1
-                if self.idle_streak >= self.stop_samples and self.saw_opposite_pulse:
+                # Normal stop: decel pulse seen, then ~1s of quiet.
+                fast = (self.idle_streak >= self.stop_samples
+                        and self.saw_opposite_pulse)
+                # Fallback stop: the decel was too gentle to cross move_thr
+                # (field test 2026-05-24: a 1-floor decel peaked at 0.294
+                # m/s^2, just under 0.30, so saw_opposite_pulse never armed and
+                # v2 hung "moving" at floor -1 for the rest of the ride). After
+                # a long continuous quiet the car is certainly stopped — end
+                # the trip even without the pulse. force_stop_samples must
+                # exceed the longest cruise-quiet so it never fires mid-trip.
+                forced = self.idle_streak >= self.force_stop_samples
+                if fast or forced:
+                    quiet_samples = self.stop_samples if fast else self.force_stop_samples
                     duration = self._now_s() - self.trip_start_t - (
-                        self.stop_samples / 100.0)  # subtract the idle window
+                        quiet_samples / 100.0)  # subtract the idle window
                     duration = max(0.0, duration)
                     distance = self.speed * max(0.0, duration - self.ramp_time)
                     floors_changed = max(1, int(round(distance / self.floor_h)))
                     self.current_floor += self.direction * floors_changed
                     self.get_logger().info(
-                        f'trip end: duration={duration:.2f}s, '
-                        f'distance={distance:.2f}m, floors={floors_changed}, '
-                        f'now at {self.current_floor}')
+                        f'trip end ({"decel" if fast else "FORCED-quiet"}): '
+                        f'duration={duration:.2f}s, distance={distance:.2f}m, '
+                        f'floors={floors_changed}, now at {self.current_floor}')
                     self.is_moving = False
                     self.direction = 0
                     self.idle_streak = 0

@@ -1,0 +1,49 @@
+###############################################################################
+# scan_sector_filter — masks the cart's corner-post sectors out of /scan_raw
+# and republishes the clean scan on /scan (what slam_toolbox and BOTH Nav2
+# costmaps consume). See scan_sector_filter.py for the why.
+#
+# Sectors are [lo, hi] degree pairs in the `laser` frame:
+#   0 deg = +x (forward), CCW positive, wrapped to (-180, 180].
+#   A pair with lo > hi wraps through +/-180 deg (e.g. [170, -170]).
+#
+# >>> THE NUMBERS BELOW ARE PLACEHOLDERS <<<
+# They are computed from the nominal 0.6 x 0.5 m chassis corner geometry
+# (posts at ~+/-39.8 deg and ~+/-140.2 deg, with a +/-6 deg half-width).
+# MEASURE on the real robot and replace — how-to at the bottom.
+#
+# SAFETY: every masked sector is a direction the robot is blind to
+# obstacles. The cart is holonomic (it can strafe any direction), so a
+# blind sector is a real collision gap in ALL travel directions, not just
+# "behind while driving forward." Keep each mask as NARROW as the post
+# truly shadows. The forward D455 depth gives partial cover up front only.
+###############################################################################
+scan_sector_filter:
+  ros__parameters:
+    input_topic: /scan_raw
+    output_topic: /scan
+    # Flat lo,hi pairs in degrees. Add/remove pairs to match your post count.
+    mask_sectors_deg:
+      - 33.8     # front-left  lo
+      - 45.8     # front-left  hi
+      - -45.8    # front-right lo
+      - -33.8    # front-right hi
+      - 134.2    # rear-left   lo
+      - 146.2    # rear-left   hi
+      - -146.2   # rear-right  lo
+      - -134.2   # rear-right  hi
+
+###############################################################################
+# HOW TO MEASURE THE REAL SECTORS
+#   1. Park the cart, run the lidar, and view /scan_raw in rviz2 or foxglove
+#      (frame `laser`, fixed frame `laser`).
+#   2. The 4 posts show as constant short-range arcs at fixed bearings. For
+#      each, read off the start and end angle of the arc.
+#   3. rviz shows 0 deg along +x (forward), angles increasing CCW. Convert to
+#      this file's range (-180, 180] and pad each side by ~2-3 deg of margin.
+#   4. Replace the pairs above, rebuild cart_bringup, relaunch. The node logs
+#      "X beams masked (Y% of FOV blind)" on the first scan — sanity-check Y.
+#
+# If you ever switch to a non-centered lidar or more/fewer posts, just edit
+# the pair list; the node handles any even-length list and wrapping sectors.
+###############################################################################

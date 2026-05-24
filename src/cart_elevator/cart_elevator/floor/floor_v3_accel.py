@@ -61,6 +61,7 @@ class FloorV3Accel(Node):
             ('v_threshold_ms', 0.20),
             ('start_samples', 10),
             ('stop_samples', 100),
+            ('force_stop_samples', 1500),
             ('bias_window_s', 5.0),
             ('bias_var_thr_mss2', 0.01),
             ('bias_var_window_n', 25),
@@ -74,9 +75,12 @@ class FloorV3Accel(Node):
         self.starting_floor = int(gp('starting_floor'))
         self.floor_h = float(gp('floor_height_m'))
         self.move_thr = float(gp('move_threshold_mss'))
+        # v_threshold_ms retained for config compat; stop detection no longer
+        # keys off integrated velocity (see _on_imu — it ran away in the field).
         self.v_thr = float(gp('v_threshold_ms'))
         self.start_samples = int(gp('start_samples'))
         self.stop_samples = int(gp('stop_samples'))
+        self.force_stop_samples = int(gp('force_stop_samples'))
         self.bias_window = float(gp('bias_window_s'))
         self.var_thr = float(gp('bias_var_thr_mss2'))
         self.var_window_n = int(gp('bias_var_window_n'))
@@ -89,6 +93,10 @@ class FloorV3Accel(Node):
         self.direction = 0
         self.active_streak = 0
         self.idle_streak = 0
+        # Set once a decel pulse (accel opposite to the start direction) is
+        # seen during a trip; gates the accel-quiet stop so the cruise phase
+        # isn't mistaken for a stop. Mirrors floor_v2_time.
+        self.saw_opposite_pulse = False
         self.bias_z = 0.0
         self.bias_samples: deque = deque(maxlen=int(self.bias_window * 100))
         self.var_buf: deque = deque(maxlen=self.var_window_n)
@@ -148,6 +156,7 @@ class FloorV3Accel(Node):
                     self.direction = 1 if a_z > 0 else -1
                     self.active_streak = 0
                     self.idle_streak = 0
+                    self.saw_opposite_pulse = False
                     self.v_z = 0.0
                     self.z = 0.0
                     self.last_t = now
@@ -166,13 +175,32 @@ class FloorV3Accel(Node):
                     self.z += self.v_z * dt
             self.last_t = now
 
-            # Use integrated velocity (not raw accel) for stop detection.
-            # During cruise a_z ~ 0 but v_z stays at cruise speed, so this
-            # bridges the cruise phase that would otherwise look like a stop.
-            stopped_now = abs(self.v_z) < self.v_thr
-            if stopped_now:
+            # Stop detection keys off ACCELERATION returning to baseline, NOT
+            # integrated velocity. Field test 2026-05-24: the old
+            # `|v_z| < v_thr` gate never re-fired once a ~0.01 m/s^2 residual
+            # bias drifted v_z past the threshold — v3 ran to floor -35 in a
+            # phantom trip that never ended. Acceleration always returns to ~0
+            # when the car physically stops, so it cannot run away.
+            #
+            # The saw_opposite_pulse guard (mirrors floor_v2_time) stops the
+            # mid-trip CRUISE phase (a_z ~ 0 for seconds on a multi-floor trip)
+            # being mistaken for a stop: a quiet window only ends the trip once
+            # the decel pulse has been seen. force_stop_samples is the fallback
+            # for gentle short trips whose decel never crosses move_thr (also
+            # observed in the field): it bounds the hang instead of integrating
+            # forever. Must be set LONGER than the longest continuous cruise-
+            # quiet (~ max_floors_per_trip * floor_h / cruise_speed) so it never
+            # fires mid-cruise on a real multi-floor trip.
+            if active_now:
+                self.idle_streak = 0
+                if a_z * self.direction < 0:
+                    self.saw_opposite_pulse = True
+            else:
                 self.idle_streak += 1
-                if self.idle_streak >= self.stop_samples:
+                fast = (self.idle_streak >= self.stop_samples
+                        and self.saw_opposite_pulse)
+                forced = self.idle_streak >= self.force_stop_samples
+                if fast or forced:
                     # On stop: snap integrated z to nearest floor multiple.
                     # Sign of z is positive when we moved up.
                     floors_changed = int(round(self.z / self.floor_h))
@@ -180,7 +208,8 @@ class FloorV3Accel(Node):
                         floors_changed = self.direction  # at least 1 floor if trip happened
                     self.current_floor += floors_changed
                     self.get_logger().info(
-                        f'trip end: integrated z={self.z:.2f}m, '
+                        f'trip end ({"decel" if fast else "FORCED-quiet"}): '
+                        f'integrated z={self.z:.2f}m, '
                         f'floors_changed={floors_changed}, now at {self.current_floor}')
                     # Preserve the trip's metadata for residual-based bias
                     # correction if a tag-driven correction arrives soon after.
@@ -190,12 +219,11 @@ class FloorV3Accel(Node):
                     self.is_moving = False
                     self.direction = 0
                     self.idle_streak = 0
+                    self.saw_opposite_pulse = False
                     self.v_z = 0.0
                     self.z = 0.0
                     self.last_t = None
                     self.trip_start_t = None
-            else:
-                self.idle_streak = 0
 
     def _on_correction(self, msg: FloorEstimate) -> None:
         # Tag-driven correction: snap current_floor and back out an implied
