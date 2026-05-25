@@ -31,9 +31,9 @@ Mission outline (hardcoded for the science-fair demo):
     -> watch /elevator/door_state for OPEN; sanity-check direction
        detector confirms an UP car arrived
   NAV_INTO_CAB
-    -> Nav2 short trip into the cab (or dock to in-cab tag directly)
+    -> Nav2 short trip into the cab
   DOCK_IN_CAB_BUTTON
-    -> dock to in-cab button-panel tag
+    -> lidar wall-dock to the in-cab button panel (no tag inside the cab)
   PRESS_FLOOR_BUTTON
     -> fire pneumatic with floor=target_floor
   WAIT_FOR_FLOOR_REACHED
@@ -120,6 +120,7 @@ class ActionKind(Enum):
     NAV_GOAL = 'NAV_GOAL'           # send a goal pose to Nav2
     SET_DOCK_TARGET = 'SET_DOCK_TARGET'
     CLEAR_DOCK_TARGET = 'CLEAR_DOCK_TARGET'
+    SET_WALL_DOCK = 'SET_WALL_DOCK'  # enable/disable the lidar in-cab wall dock
     PRESS_BUTTON = 'PRESS_BUTTON'   # NT key to RoboRIO
     SWAP_MAP = 'SWAP_MAP'
     SET_SAFE_TARGET = 'SET_SAFE_TARGET'  # retarget safe_to_enter_gate
@@ -313,15 +314,19 @@ class Mission:
             return [Action(ActionKind.NAV_GOAL,
                            {'pose': c.into_cab_pose})]
         if st == State.DOCK_IN_CAB_BUTTON:
-            return [Action(ActionKind.SET_DOCK_TARGET,
-                           {'tag_id': c.in_cab_panel_tag_id})]
+            # No AprilTag inside the cab — align to the button panel with
+            # the lidar wall-dock instead. Enabling it disables the tag
+            # dock (they share /dock/cmd_vel + /dock/status).
+            return [Action(ActionKind.SET_WALL_DOCK, {'enabled': True})]
         if st == State.PRESS_FLOOR_BUTTON:
             return [Action(ActionKind.PRESS_BUTTON,
                            {'button': f'floor_{c.target_floor}'})]
         if st == State.WAIT_FOR_FLOOR_REACHED:
-            # Retarget safe gate to the destination floor — now we
-            # wait for the car to arrive THERE.
-            return [Action(ActionKind.SET_SAFE_TARGET,
+            # Floor button is pressed; we're riding now. Release the wall
+            # dock (it held us on the panel through the press) so it stops
+            # driving, and retarget the safe gate to the destination floor.
+            return [Action(ActionKind.SET_WALL_DOCK, {'enabled': False}),
+                    Action(ActionKind.SET_SAFE_TARGET,
                            {'floor': c.target_floor})]
         if st == State.NAV_OUT_OF_CAB:
             return [Action(ActionKind.NAV_GOAL,

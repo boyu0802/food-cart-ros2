@@ -37,6 +37,7 @@ setup(
             'direction_v3_fusion = cart_elevator.direction.direction_v3_fusion:main',
             # Docking
             'dock_controller = cart_elevator.dock.dock_controller:main',
+            'wall_dock_controller = cart_elevator.dock.wall_dock_controller:main',
             # Door state
             'door_state_detector = cart_elevator.door.door_state_detector:main',
             # Mission supervisor
@@ -50,6 +51,7 @@ setup(
             'fake_elevator_imu = cart_elevator.test_helpers.fake_imu:main',
             'fake_direction_image = cart_elevator.test_helpers.fake_direction_image:main',
             'fake_dock_sim = cart_elevator.test_helpers.fake_dock_sim:main',
+            'fake_cab_sim = cart_elevator.test_helpers.fake_cab_sim:main',
             'fake_door_depth = cart_elevator.test_helpers.fake_door_depth:main',
             'mission_sim_driver = cart_elevator.test_helpers.mission_sim_driver:main',
             'video_replay = cart_elevator.test_helpers.video_replay:main',
