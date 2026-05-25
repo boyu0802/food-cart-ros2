@@ -197,7 +197,10 @@ class DockController(Node):
 
     def _tick(self) -> None:
         if not self.enabled:
-            self._publish(0.0, 0.0, 0.0)
+            # Stay silent on /dock/cmd_vel while disabled — the wall dock
+            # shares this topic, so streaming zeros from here would fight
+            # whichever controller is active. A single zero is already sent
+            # on the disable transition (_on_set_target).
             return
 
         now = self.get_clock().now()

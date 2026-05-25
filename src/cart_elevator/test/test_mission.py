@@ -98,8 +98,22 @@ def test_wait_for_floor_reached_emits_set_safe_target_for_destination():
     m.state = State.PRESS_FLOOR_BUTTON
     st, acts = m.step(Snapshot(press_done=True))
     assert st == State.WAIT_FOR_FLOOR_REACHED
-    assert _kinds(acts) == [ActionKind.SET_SAFE_TARGET]
-    assert acts[0].payload['floor'] == 4
+    # Releases the wall dock (button pressed, ride starting) then retargets
+    # the safe gate to the destination floor.
+    assert _kinds(acts) == [ActionKind.SET_WALL_DOCK, ActionKind.SET_SAFE_TARGET]
+    assert acts[0].payload['enabled'] is False
+    assert acts[1].payload['floor'] == 4
+
+
+def test_dock_in_cab_enables_wall_dock_not_a_tag():
+    # No tag inside the cab: entering DOCK_IN_CAB_BUTTON must enable the
+    # lidar wall dock, never set a tag dock target.
+    m = Mission(_cfg(target_floor=4))
+    m.state = State.NAV_INTO_CAB
+    st, acts = m.step(Snapshot(nav_succeeded=True))
+    assert st == State.DOCK_IN_CAB_BUTTON
+    assert _kinds(acts) == [ActionKind.SET_WALL_DOCK]
+    assert acts[0].payload['enabled'] is True
 
 
 def test_floor_reached_waits_for_safe_to_enter():

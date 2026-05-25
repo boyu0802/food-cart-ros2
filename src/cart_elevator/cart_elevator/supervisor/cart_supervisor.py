@@ -9,6 +9,8 @@ dispatches each Action via:
   NAV_GOAL          -> Nav2 NavigateToPose action client
   SET_DOCK_TARGET   -> /dock/set_target service (per-target yaml)
   CLEAR_DOCK_TARGET -> SetDockTarget(enabled=false)
+  SET_WALL_DOCK     -> /dock/wall/enable std_srvs/SetBool (in-cab lidar
+                       dock; enabling it disables the tag dock)
   PRESS_BUTTON      -> /elevator/press_button std_msgs/String; wait for
                        /elevator/press_done std_msgs/Bool from NT bridge
   SWAP_MAP          -> std_msgs/Int32 on /map/swap_floor + an
@@ -65,6 +67,7 @@ from cart_elevator_msgs.msg import (
     DoorState, FloorEstimate, ElevatorDirection, DockStatus,
 )
 from cart_elevator_msgs.srv import SetDockTarget
+from std_srvs.srv import SetBool
 from nav2_msgs.action import NavigateToPose
 from cart_elevator.supervisor.mission import (
     Mission, MissionConfig, Snapshot, Action, ActionKind, State,
@@ -83,6 +86,7 @@ _RESUMABLE_ACTION_KINDS = frozenset({
     ActionKind.NAV_GOAL,
     ActionKind.SET_DOCK_TARGET,
     ActionKind.CLEAR_DOCK_TARGET,
+    ActionKind.SET_WALL_DOCK,
     ActionKind.SET_SAFE_TARGET,
     ActionKind.PRESS_BUTTON,
     ActionKind.MISSION_CMD,
@@ -227,6 +231,8 @@ class CartSupervisor(Node):
         # ---- Action / service / publisher clients for the side effects ----
         self.nav_client = ActionClient(self, NavigateToPose, '/navigate_to_pose')
         self.dock_target_client = self.create_client(SetDockTarget, '/dock/set_target')
+        # In-cab lidar wall dock enable/disable (std_srvs/SetBool).
+        self.wall_dock_client = self.create_client(SetBool, '/dock/wall/enable')
         self.press_pub = self.create_publisher(String, '/elevator/press_button', 5)
         # /mission/cmd carries "load" | "unload" | "stow" to the
         # RoboRIO-side lift+pusher (parallel mechanism to the
@@ -260,6 +266,13 @@ class CartSupervisor(Node):
         self.snap.elevator_direction = int(msg.direction)
 
     def _on_dock_status(self, msg: DockStatus) -> None:
+        # The tag dock and the wall dock both publish here; only one is
+        # ever enabled at a time. A DISABLED message is the *inactive*
+        # controller — ignore it so it can't clobber the active dock's
+        # flags (e.g. the disabled tag dock reporting DISABLED while the
+        # wall dock is mid-align).
+        if msg.state == DockStatus.DISABLED:
+            return
         self.snap.dock_aligned = (msg.state == DockStatus.ALIGNED)
         self.snap.dock_lost = (msg.state == DockStatus.LOST)
 
@@ -305,6 +318,7 @@ class CartSupervisor(Node):
         self.get_logger().warn('mission: RESTART pressed -> IDLE')
         self._cancel_nav_goal()
         self._clear_dock_target()
+        self._enable_wall_dock(False)
         # Wipe all one-shot latches AND level-triggered safe gate cache —
         # nothing should carry across a restart.
         self.snap = Snapshot(target_floor=self.cfg.target_floor)
@@ -400,6 +414,8 @@ class CartSupervisor(Node):
             self._send_dock_target(action.payload['tag_id'])
         elif action.kind == ActionKind.CLEAR_DOCK_TARGET:
             self._clear_dock_target()
+        elif action.kind == ActionKind.SET_WALL_DOCK:
+            self._set_wall_dock(bool(action.payload['enabled']))
         elif action.kind == ActionKind.PRESS_BUTTON:
             self._press_button(action.payload['button'])
         elif action.kind == ActionKind.SWAP_MAP:
@@ -501,6 +517,29 @@ class CartSupervisor(Node):
             self.get_logger().warn('dock /set_target service not available to clear')
             return
         self.dock_target_client.call_async(req)
+
+    def _set_wall_dock(self, enabled: bool) -> None:
+        """Enable/disable the in-cab lidar wall dock. Enabling it first
+        disables the tag dock (they share /dock/cmd_vel + /dock/status)
+        and clears the stale dock flags so we don't read a leftover
+        ALIGNED from the previous (hallway) dock."""
+        if enabled:
+            self._clear_dock_target()
+            self.snap.dock_aligned = False
+            self.snap.dock_lost = False
+        self._enable_wall_dock(enabled)
+
+    def _enable_wall_dock(self, enabled: bool) -> None:
+        # Best-effort: the wall dock node isn't present in every launch
+        # (sim/tests), so a missing service is a warning, not a fault.
+        if not self.wall_dock_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().warn(
+                '/dock/wall/enable service not available — wall dock skipped')
+            return
+        req = SetBool.Request()
+        req.data = bool(enabled)
+        self.wall_dock_client.call_async(req)
+        self.get_logger().info(f'wall dock {"enabled" if enabled else "disabled"}')
 
     def _on_set_target_response(self, future) -> None:
         try:
