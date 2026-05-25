@@ -2,27 +2,36 @@
 <robot name="food_cart" xmlns:xacro="http://ros.org/wiki/xacro">
 
   <!-- ============================================================ -->
-  <!--  PLACEHOLDER DIMENSIONS                                       -->
-  <!--  Update these once the physical cart is built. Everything     -->
-  <!--  else in this file references these properties.               -->
+  <!--  DIMENSIONS — measured on the real cart 2026-05-24 unless TODO  -->
   <!-- ============================================================ -->
 
-  <!-- Chassis bounding box (meters). LxWxH. -->
-  <xacro:property name="chassis_length" value="0.60"/>
-  <xacro:property name="chassis_width"  value="0.50"/>
-  <xacro:property name="chassis_height" value="0.30"/>
-  <xacro:property name="chassis_mass"   value="20.0"/>
+  <!-- Chassis bounding box (meters). LxWxH. Footprint is a 0.725 m square.
+       chassis_height is the RIGID body top, NOT the button-presser lift
+       (that extends to 1.50 m above floor). -->
+  <xacro:property name="chassis_length" value="0.725"/>
+  <xacro:property name="chassis_width"  value="0.725"/>
+  <xacro:property name="chassis_height" value="0.628"/>  <!-- frame top 67 cm AGL (0.042 + 0.628); camera rides ~4.6 cm above on a riser -->
+  <xacro:property name="chassis_mass"   value="20.0"/>   <!-- TODO: measure -->
 
-  <!-- Swerve wheel radius (only used to lift base_link off the ground). -->
-  <xacro:property name="wheel_radius" value="0.075"/>
+  <!-- base_link ground clearance: chassis underside off the floor (42 mm).
+       The sensor z-heights below are measured from the floor and converted
+       to base_link-relative by subtracting this. -->
+  <xacro:property name="base_clearance" value="0.042"/>
 
-  <!-- Lidar mount relative to base_link (top of chassis, centered). -->
-  <xacro:property name="lidar_xyz" value="0.0 0.0 ${chassis_height/2 + 0.02}"/>
-  <xacro:property name="lidar_rpy" value="0 0 0"/>
+  <!-- C1 lidar: centered on the cart, scan plane 193.155 mm above floor.
+       z rel base_link = 0.193155 - 0.042. Its plane cuts through the swerve
+       modules — see cart_bringup/config/scan_filter.yaml for the mask. -->
+  <xacro:property name="lidar_xyz" value="0.0 0.0 0.151155"/>
+  <!-- C1's 0-deg beam faces the cart's REAR, so yaw it 180 deg to align the
+       scan with base_link +x (forward). The mask in scan_filter.yaml is in the
+       lidar's own frame, so it is unaffected by this. -->
+  <xacro:property name="lidar_rpy" value="0 0 3.14159"/>
 
-  <!-- D455 camera mount relative to base_link (front edge, mid height). -->
-  <xacro:property name="camera_xyz" value="${chassis_length/2} 0.0 0.0"/>
-  <xacro:property name="camera_rpy" value="0 0 0"/>
+  <!-- D455: 320.971 mm forward, 51.429 mm to the right (-y), 716.455 mm above
+       floor, pitched 10 deg down. z rel base_link = 0.716455 - 0.042.
+       camera_link x is the pointing axis; +pitch tilts it downward. -->
+  <xacro:property name="camera_xyz" value="0.320971 -0.051429 0.674455"/>
+  <xacro:property name="camera_rpy" value="0 0.174533 0"/>
 
   <!-- IMU mount (used for the RoboRIO Pigeon / NavX, NOT the D455 IMU). -->
   <xacro:property name="imu_xyz" value="0.0 0.0 0.0"/>
@@ -43,7 +52,7 @@
   <joint name="base_footprint_to_base_link" type="fixed">
     <parent link="base_footprint"/>
     <child link="base_link"/>
-    <origin xyz="0 0 ${wheel_radius}" rpy="0 0 0"/>
+    <origin xyz="0 0 ${base_clearance}" rpy="0 0 0"/>
   </joint>
 
   <!-- ============================================================ -->

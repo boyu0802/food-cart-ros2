@@ -65,8 +65,11 @@ nt_bridge:
     tag_publish_rate: 20.0        # Hz; Limelight runs ~90 FPS, downsampled here
 
     # ===== TF =====
-    publish_odom_tf: true         # nt_bridge -> odom -> base_link
-    base_frame_id: "base_link"
+    publish_odom_tf: true         # nt_bridge -> odom -> base_footprint
+    # REP-105: odom connects to base_footprint (ground frame); the URDF then
+    # supplies the static base_footprint -> base_link (4.2 cm). Using base_link
+    # here would give base_link two parents and break the TF tree.
+    base_frame_id: "base_footprint"
     odom_frame_id: "odom"
     imu_frame_id: "imu_link"
     tag_frame_id: "limelight"     # frame_id stamped on TagDetection messages

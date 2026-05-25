@@ -7,10 +7,13 @@
 #   0 deg = +x (forward), CCW positive, wrapped to (-180, 180].
 #   A pair with lo > hi wraps through +/-180 deg (e.g. [170, -170]).
 #
-# >>> THE NUMBERS BELOW ARE PLACEHOLDERS <<<
-# They are computed from the nominal 0.6 x 0.5 m chassis corner geometry
-# (posts at ~+/-39.8 deg and ~+/-140.2 deg, with a +/-6 deg half-width).
-# MEASURE on the real robot and replace — how-to at the bottom.
+# Measured on the real cart 2026-05-24 from /scan_raw (how-to at the bottom).
+# The centered C1's scan plane cuts through the cart's own structure: the 4
+# swerve modules (each a ~25 mm pillar pair + a chain loop) plus one asymmetric
+# bracket. Each module shows as one short-range blob at ~0.3 m; the 8 pillars
+# are NOT individually resolvable (the pillar pair on a module is cm apart ->
+# only a few deg at 0.3 m -> they merge), and the thin chain strands fold into
+# the same blobs. So we mask per-module blobs with a +/-3 deg margin.
 #
 # SAFETY: every masked sector is a direction the robot is blind to
 # obstacles. The cart is holonomic (it can strafe any direction), so a
@@ -22,16 +25,29 @@ scan_sector_filter:
   ros__parameters:
     input_topic: /scan_raw
     output_topic: /scan
-    # Flat lo,hi pairs in degrees. Add/remove pairs to match your post count.
+    # Flat lo,hi pairs in degrees. Measured 2026-05-24; closest ~0.28-0.35 m.
     mask_sectors_deg:
-      - 33.8     # front-left  lo
-      - 45.8     # front-left  hi
-      - -45.8    # front-right lo
-      - -33.8    # front-right hi
-      - 134.2    # rear-left   lo
-      - 146.2    # rear-left   hi
-      - -146.2   # rear-right  lo
-      - -134.2   # rear-right  hi
+      # front-left swerve module (pillar pair + chain)
+      - 63.7
+      - 77.6
+      # front-right swerve module (mirror)
+      - -74.2
+      - -59.7
+      # rear-left swerve module: pillar blob + inboard chain strand, with a
+      # ~2 deg see-through gap between them left UNMASKED on purpose
+      - 105.1
+      - 120.6
+      - 95.1
+      - 103.1
+      # rear-right swerve module (mirror of rear-left)
+      - -117.6
+      - -99.6
+      - -98.6
+      - -91.1
+      # asymmetric bracket, rear-right — no left-side twin; confirmed
+      # cart-fixed by push-test 2026-05-24
+      - -157.5
+      - -147.5
 
 ###############################################################################
 # HOW TO MEASURE THE REAL SECTORS

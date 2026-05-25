@@ -53,6 +53,9 @@ def generate_launch_description():
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('enable_description', default_value='true'),
         DeclareLaunchArgument('enable_sensors', default_value='true'),
+        DeclareLaunchArgument('enable_camera', default_value='true',
+                              description='Forward to sensors.launch; set false '
+                              'to skip the D455 (not needed for mapping).'),
         DeclareLaunchArgument('enable_nt_bridge', default_value='true'),
         DeclareLaunchArgument('enable_slam', default_value='true'),
         DeclareLaunchArgument('enable_nav2', default_value='true'),
@@ -73,6 +76,9 @@ def generate_launch_description():
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(sensors_launch),
             condition=IfCondition(LaunchConfiguration('enable_sensors')),
+            launch_arguments={
+                'enable_camera': LaunchConfiguration('enable_camera'),
+            }.items(),
         ),
 
         # ---- nt_bridge ----
