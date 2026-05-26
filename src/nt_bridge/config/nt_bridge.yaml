@@ -25,7 +25,7 @@ nt_bridge:
     # ===== NT table names (RoboRIO must match) =====
     nt_cmd_table: "Nav/cmd"       # publishes vx, vy, omega, heartbeat, timestamp
     nt_odom_table: "Robot/odom"   # subscribes x, y, theta, vx, vy, omega
-    nt_imu_table: "Robot/imu"     # subscribes yaw, yaw_rate, accel_x, accel_y
+    nt_imu_table: "Robot/imu"     # subscribes yaw, yaw_rate, accel_x, accel_y, accel_z
     nt_limelight_table: "limelight"  # default Limelight table; "limelight-<name>" if renamed
 
     # ===== mission I/O =====
