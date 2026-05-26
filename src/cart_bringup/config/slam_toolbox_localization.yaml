@@ -1,0 +1,79 @@
+###############################################################################
+# slam_toolbox LOCALIZATION config — team 6998 food cart
+#
+# Loads a saved serialized map (map_file_name, normally supplied by the launch
+# via map:=...) and localizes the live /scan against it instead of building a
+# new map. Publishes the loaded /map (latched) + the map->odom TF, exactly like
+# the mapping config — so Nav2 consumes it unchanged (no amcl / map_server).
+#
+# Used by: launch/slam.launch.py   (slam_mode:=localization)
+# Mapping counterpart: config/slam_toolbox.yaml
+###############################################################################
+
+slam_toolbox:
+  ros__parameters:
+
+    # ----- mode & saved map -----
+    mode: localization             # localize against a saved posegraph
+    # The launch passes map_file_name as an override (the installed copy of
+    # whatever map:= points to), so this value is only a fallback if the node
+    # is run by hand. Path is WITHOUT extension — slam_toolbox appends
+    # .posegraph and .data.
+    map_file_name: /home/ros2/ros2_ws/src/cart_bringup/maps/floor_4/map
+    # Initial pose of base_link in the map frame at startup, [x, y, yaw].
+    # [0, 0, 0] == wherever the cart was standing when THIS map's recording
+    # began (slam_toolbox always starts a map run at the origin). If you don't
+    # park the cart on that exact spot before launch, drop a "2D Pose Estimate"
+    # in Foxglove/RViz once it's up (publishes /initialpose) to re-seat it.
+    map_start_pose: [0.0, 0.0, 0.0]
+
+    # ----- frames & topics -----
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_link
+    scan_topic: /scan
+
+    # ----- general -----
+    debug_logging: false
+    throttle_scans: 1              # process every Nth scan
+    transform_publish_period: 0.05 # 20 Hz map->odom
+    map_update_interval: 1.0       # seconds between map publishes
+    resolution: 0.05               # m/cell (must match the saved map)
+    max_laser_range: 12.0          # Slamtec C1 spec max
+    minimum_time_interval: 0.2     # min seconds between processed scans
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000
+
+    # ----- motion thresholds -----
+    minimum_travel_distance: 0.2   # m
+    minimum_travel_heading: 0.2    # rad
+
+    # ----- scan matcher (registers live scans against the saved map) -----
+    enable_interactive_mode: false
+    use_scan_matching: true
+    use_scan_barycenter: true
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+    loop_search_maximum_distance: 3.0
+    do_loop_closing: true
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+
+    # ----- correlation / scan matcher tuning -----
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
+    loop_search_space_dimension: 8.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+    fine_search_angle_offset: 0.00349   # rad (0.2 deg)
+    coarse_search_angle_offset: 0.349   # rad (20 deg)
+    coarse_angle_resolution: 0.0349     # rad (2 deg)
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true

@@ -40,6 +40,8 @@ def generate_launch_description():
         FindPackageShare('cart_bringup'), 'launch', 'slam.launch.py'])
     nav2_launch = PathJoinSubstitution([
         FindPackageShare('cart_bringup'), 'launch', 'nav2.launch.py'])
+    default_map = PathJoinSubstitution([
+        FindPackageShare('cart_bringup'), 'maps', 'floor_4', 'map'])
     nt_bridge_launch = PathJoinSubstitution([
         FindPackageShare('nt_bridge'), 'launch', 'nt_bridge.launch.py'])
 
@@ -58,6 +60,14 @@ def generate_launch_description():
                               'to skip the D455 (not needed for mapping).'),
         DeclareLaunchArgument('enable_nt_bridge', default_value='true'),
         DeclareLaunchArgument('enable_slam', default_value='true'),
+        DeclareLaunchArgument('slam_mode', default_value='mapping',
+                              description="'mapping' (build a new map) or "
+                              "'localization' (load map:= and localize). Use "
+                              "localization to test Nav2 on a saved floor map."),
+        DeclareLaunchArgument('map', default_value=default_map,
+                              description='Localization only: serialized map '
+                              'path WITHOUT extension. Defaults to floor_4; '
+                              'point at maps/floor_N/map for other floors.'),
         DeclareLaunchArgument('enable_nav2', default_value='true'),
         DeclareLaunchArgument('enable_twist_mux', default_value='true'),
         DeclareLaunchArgument('enable_dock', default_value='false',
@@ -91,7 +101,11 @@ def generate_launch_description():
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(slam_launch),
             condition=IfCondition(LaunchConfiguration('enable_slam')),
-            launch_arguments={'use_sim_time': use_sim_time}.items(),
+            launch_arguments={
+                'use_sim_time': use_sim_time,
+                'slam_mode': LaunchConfiguration('slam_mode'),
+                'map': LaunchConfiguration('map'),
+            }.items(),
         ),
 
         # ---- nav2 ----
