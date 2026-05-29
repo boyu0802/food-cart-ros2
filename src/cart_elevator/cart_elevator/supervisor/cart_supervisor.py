@@ -108,6 +108,11 @@ class CartSupervisor(Node):
             ('tick_rate_hz', 5.0),
             ('target_floor', 4),
             ('starting_floor', 1),
+            # Sub-mission framing (see MissionConfig). Defaults give the
+            # full pickup→ride→dropoff run; the ride-only demo sets
+            # first_state=DOCK_HALLWAY_CALL and after_cab_exit=DONE.
+            ('first_state', 'NAV_TO_PICKUP'),
+            ('after_cab_exit', 'RELOCALIZE_AT_FLOOR'),
             ('pickup_tag_id', 200),
             ('hallway_panel_tag_id', 210),
             ('in_cab_panel_tag_id', 220),
@@ -141,6 +146,8 @@ class CartSupervisor(Node):
         cfg = MissionConfig(
             target_floor=int(gp('target_floor')),
             starting_floor=int(gp('starting_floor')),
+            first_state=State(str(gp('first_state'))),
+            after_cab_exit=State(str(gp('after_cab_exit'))),
             pickup_tag_id=int(gp('pickup_tag_id')),
             hallway_panel_tag_id=int(gp('hallway_panel_tag_id')),
             in_cab_panel_tag_id=int(gp('in_cab_panel_tag_id')),
