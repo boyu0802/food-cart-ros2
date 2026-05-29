@@ -1,0 +1,35 @@
+###############################################################################
+# door_state_detector — HALLWAY-WAIT pose (Test A).
+#
+# The cart sits in the hallway facing the closed elevator door, waiting for it
+# to open. ROI + thresholds calibrated 2026-05-29 on the real D455
+# (480x270 depth stream) with door_roi_overlay + door_std_probe.
+#
+# The in-cab pose frames the door differently — see door_incab.yaml. Launch
+# the detector with whichever file matches the cart's current pose.
+###############################################################################
+
+door_state_detector:
+  ros__parameters:
+    depth_topic: /camera/camera/depth/image_rect_raw
+    state_topic: /elevator/door_state
+    # --- ROI in pixels (top-left x,y + width,height) ---
+    # Calibrated at hallway-wait pose. Box frames the door opening.
+    roi_x: 104
+    roi_y: 58
+    roi_w: 170
+    roi_h: 194
+    # D455 publishes 16UC1 millimetres.
+    depth_scale_m: 0.001
+    # --- classifier thresholds (metres) ---
+    # Measured: closed median 0.68 / std 0.004; open median 2.36 / std ~0.31.
+    closed_depth_m: 0.75
+    open_depth_m: 1.50
+    # Open view is deep but JAGGED (cab interior), not flat. Cap sits above
+    # the open std so both closed and open pass the flat gate; the median
+    # split does the closed-vs-open work.
+    lateral_std_flat_m: 0.45
+    moving_dlat_thr_per_s: 0.10
+    lateral_std_lpf_alpha: 0.4
+    depth_max_age_s: 0.5
+    publish_rate_hz: 10.0

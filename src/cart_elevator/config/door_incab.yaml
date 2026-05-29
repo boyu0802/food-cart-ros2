@@ -1,0 +1,53 @@
+###############################################################################
+# door_state_detector — IN-CAB pose (Test B).
+#
+# The cart is inside the elevator car, facing the door, waiting for it to open
+# at the destination floor. The door frames DIFFERENTLY here than from the
+# hallway, so this needs its own ROI — see door_hallway.yaml for Test A.
+#
+# ROI calibrated 2026-05-29 at the in-cab pose via door_roi_overlay
+# (green box framed the cab door in Foxglove). Thresholds below are STILL
+# PLACEHOLDERS — finish calibration before trusting:
+#   1. [done] Tune roi_x/y/w/h on door_roi_overlay until the box frames
+#      the cab door; values copied in below.
+#   2. [done] door_std_probe at in-cab pose, THIS ROI:
+#        closed: median 0.31 / lateral_std 0.002 (dead-flat panel)
+#        open  : median ~3.30 / lateral_std ~0.46-0.63 (jagged cab interior)
+#        opening transient: median 1.87->2.96 / std 1.18->0.77 (motion branch)
+#   3. [done] thresholds below set from those measurements (2026-05-29).
+#
+# open_depth_m is a LOW gate, NOT 3.30: what's past the door varies per floor
+# (could be a near wall ~0.9 m or a long lobby), so we anchor on the 0.31 m
+# closed panel and call OPEN whenever the median is meaningfully deeper.
+#
+# Design note (pose-independent, from the user): what's beyond the open door
+# varies per floor, so open_depth_m is a LOW gate (anything deeper than the
+# closed panel = open) rather than a tuned distance. lateral_std_flat_m must
+# sit above the worst open std (in-cab probe through the wrong ROI showed
+# ~0.6, so the 0.80 below is a provisional starting point — re-verify).
+###############################################################################
+
+door_state_detector:
+  ros__parameters:
+    depth_topic: /camera/camera/depth/image_rect_raw
+    state_topic: /elevator/door_state
+    # --- ROI in pixels --- calibrated 2026-05-29 at in-cab pose ---
+    roi_x: 100
+    roi_y: 50
+    roi_w: 180
+    roi_h: 170
+    depth_scale_m: 0.001
+    # --- classifier thresholds (metres) --- measured 2026-05-29, in-cab ---
+    # closed panel sits at 0.31 m; gate at 0.50 = ~95-sigma margin, still
+    # well under any plausible open view.
+    closed_depth_m: 0.50
+    # low gate: anything deeper than ~0.60 m = panel gone = OPEN, regardless
+    # of which floor's scene is revealed. Re-check at other floors.
+    open_depth_m: 0.60
+    # open view is JAGGED (std up to 0.63 here); cap sits above it so OPEN
+    # passes the flat gate. Fit to THIS floor — re-verify at others.
+    lateral_std_flat_m: 0.75
+    moving_dlat_thr_per_s: 0.10
+    lateral_std_lpf_alpha: 0.4
+    depth_max_age_s: 0.5
+    publish_rate_hz: 10.0
