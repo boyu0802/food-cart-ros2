@@ -17,4 +17,12 @@ install(PROGRAMS
   RENAME scan_sector_filter
 )
 
+# Runtime workaround for the arm64 realsense pointcloud param quirk; fired by
+# sensors.launch.py once the camera is up. See the script header.
+install(PROGRAMS
+  scripts/enable_d455_pointcloud.sh
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME enable_d455_pointcloud
+)
+
 ament_package()

@@ -15,6 +15,7 @@ Notes:
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    ExecuteProcess,
     GroupAction,
     IncludeLaunchDescription,
 )
@@ -65,16 +66,40 @@ def generate_launch_description():
             PythonLaunchDescriptionSource(rs_launch),
             condition=IfCondition(enable_camera),
             launch_arguments={
-                # Explicitly DO NOT enable gyro/accel — see docs/SETUP.md.
-                'enable_gyro': 'false',
+                # DEPTH-ONLY: this camera exists only to feed Nav2's local
+                # voxel_layer with off-plane obstacles, so every stream except
+                # depth is stripped and we emit an untextured XYZ cloud. The
+                # full-res *colored* cloud starved the USB link (~0.6 Hz,
+                # bursty, UVC -EPIPE errors in dmesg); XYZ-only at low res
+                # runs steady. Bump depth_profile back up if range/detail
+                # turns out to be insufficient.
+                'enable_gyro': 'false',     # D455 IMU unusable on this kernel
                 'enable_accel': 'false',
-                'enable_color': 'true',
+                'enable_motion': 'false',
+                'enable_color': 'false',    # no color stream
+                'enable_infra': 'false',    # no IR streams
+                'enable_infra1': 'false',
+                'enable_infra2': 'false',
+                'align_depth.enable': 'false',  # only needed for a colored cloud
                 'enable_depth': 'true',
-                # NOTE: 'pointcloud.enable:=true' does NOT propagate on this
-                # arm64 build. After launch, run:
-                #   ros2 param set /camera/camera pointcloud__neon_.enable true
+                'depth_module.depth_profile': '480x270x15',  # light; bump if needed
+                # Emit the cloud even though there's no color texture.
                 'pointcloud.enable': 'true',
-                'align_depth.enable': 'true',
+                'pointcloud.allow_no_texture_points': 'true',
+                # NOTE: these pointcloud.* args do NOT reach the node on this
+                # arm64 build (param is mangled to pointcloud__neon_.*), so the
+                # enable_d455_pointcloud helper below sets them at runtime.
             }.items(),
+        ),
+
+        # Workaround for the arm64 realsense pointcloud quirk: the launch args
+        # above never reach pointcloud__neon_.*, so without this the cloud
+        # silently never publishes. This helper waits for /camera/camera to
+        # come up, then sets enable + allow_no_texture_points. Self-retrying,
+        # so launch order doesn't matter. See scripts/enable_d455_pointcloud.sh.
+        ExecuteProcess(
+            cmd=['ros2', 'run', 'cart_bringup', 'enable_d455_pointcloud'],
+            output='screen',
+            condition=IfCondition(enable_camera),
         ),
     ])
