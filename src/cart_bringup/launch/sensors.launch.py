@@ -4,7 +4,7 @@ Notes:
 - The D455 IMU is NOT enabled (kernel doesn't ship hid-sensor-hub on the
   rockchip 6.1 kernel — driver spams errors if asked).
 - The realsense pointcloud has a quirky runtime param name on this build;
-  we set it via a node param override below. See docs/SETUP.md.
+  we set it via a node param override below. See PROGRESS.md.
 - The C1 is mounted centered among the cart's 4 corner posts, so its raw
   scan is published on /scan_raw and passed through scan_sector_filter,
   which masks the post bearings and republishes the clean scan on /scan.
