@@ -42,62 +42,20 @@ bt_navigator:
     bt_loop_duration: 10
     default_server_timeout: 20
     wait_for_service_timeout: 1000
-    # Use Nav2's bundled BTs by default. Override with a custom XML later
-    # if we want the cart to do something special.
-    default_nav_to_pose_bt_xml: ''
-    default_nav_through_poses_bt_xml: ''
-    plugin_lib_names:
-      - nav2_compute_path_to_pose_action_bt_node
-      - nav2_compute_path_through_poses_action_bt_node
-      - nav2_smooth_path_action_bt_node
-      - nav2_follow_path_action_bt_node
-      - nav2_spin_action_bt_node
-      - nav2_wait_action_bt_node
-      - nav2_assisted_teleop_action_bt_node
-      - nav2_back_up_action_bt_node
-      - nav2_drive_on_heading_bt_node
-      - nav2_clear_costmap_service_bt_node
-      - nav2_is_stuck_condition_bt_node
-      - nav2_goal_reached_condition_bt_node
-      - nav2_goal_updated_condition_bt_node
-      - nav2_globally_updated_goal_condition_bt_node
-      - nav2_is_path_valid_condition_bt_node
-      - nav2_are_error_codes_active_condition_bt_node
-      - nav2_would_a_controller_recovery_help_condition_bt_node
-      - nav2_would_a_planner_recovery_help_condition_bt_node
-      - nav2_would_a_smoother_recovery_help_condition_bt_node
-      - nav2_initial_pose_received_condition_bt_node
-      - nav2_reinitialize_global_localization_service_bt_node
-      - nav2_rate_controller_bt_node
-      - nav2_distance_controller_bt_node
-      - nav2_speed_controller_bt_node
-      - nav2_truncate_path_action_bt_node
-      - nav2_truncate_path_local_action_bt_node
-      - nav2_goal_updater_node_bt_node
-      - nav2_recovery_node_bt_node
-      - nav2_pipeline_sequence_bt_node
-      - nav2_round_robin_node_bt_node
-      - nav2_transform_available_condition_bt_node
-      - nav2_time_expired_condition_bt_node
-      - nav2_path_expiring_timer_condition
-      - nav2_distance_traveled_condition_bt_node
-      - nav2_single_trigger_bt_node
-      - nav2_goal_updated_controller_bt_node
-      - nav2_is_battery_low_condition_bt_node
-      - nav2_navigate_through_poses_action_bt_node
-      - nav2_navigate_to_pose_action_bt_node
-      - nav2_remove_passed_goals_action_bt_node
-      - nav2_planner_selector_bt_node
-      - nav2_controller_selector_bt_node
-      - nav2_goal_checker_selector_bt_node
-      - nav2_controller_cancel_bt_node
-      - nav2_path_longer_on_approach_bt_node
-      - nav2_wait_cancel_bt_node
-      - nav2_spin_cancel_bt_node
-      - nav2_back_up_cancel_bt_node
-      - nav2_assisted_teleop_cancel_bt_node
-      - nav2_drive_on_heading_cancel_bt_node
-      - nav2_is_battery_charging_condition_bt_node
+    # Use Nav2's bundled BTs by default: leave default_nav_to_pose_bt_xml /
+    # default_nav_through_poses_bt_xml UNSET so bt_navigator falls back to its
+    # built-in navigate_to_pose_w_replanning_and_recovery.xml.
+    # WARNING: do NOT set these to '' (empty). Empty != "use default" -- it
+    # means "load a file named <nothing>", which fails at startup with
+    # "Couldn't open input XML file:" / "BT file not found: ." and every goal
+    # is canceled before any path is planned (no /plan published).
+    # To use a custom tree later, set these to its absolute .xml path.
+    # NOTE: do NOT enumerate plugin_lib_names here. On Nav2 Jazzy the
+    # bt_navigator already auto-registers every standard BT node. Re-listing
+    # them (this used to hold the full default list) double-registers and
+    # throws "ID [ComputePathToPose] already registered" -> FATAL -> SIGSEGV
+    # on startup, which silently leaves the whole Nav2 lifecycle 'inactive'.
+    # Only add plugin_lib_names back for CUSTOM BT nodes beyond the defaults.
 
 controller_server:
   ros__parameters:
@@ -118,8 +76,8 @@ controller_server:
 
     general_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.15        # PLACEHOLDER
-      yaw_goal_tolerance: 0.20       # PLACEHOLDER
+      xy_goal_tolerance: 0.05        # PLACEHOLDER
+      yaw_goal_tolerance: 0.10       # PLACEHOLDER
       stateful: true
 
     FollowPath:
@@ -134,10 +92,10 @@ controller_server:
       vx_std: 0.2
       vy_std: 0.2
       wz_std: 0.4
-      vx_max: 0.5                    # PLACEHOLDER (top forward speed)
-      vx_min: -0.35                  # PLACEHOLDER
-      vy_max: 0.5                    # PLACEHOLDER (holonomic strafe)
-      wz_max: 1.5                    # PLACEHOLDER
+      vx_max: 3.0                    # PLACEHOLDER (top forward speed)
+      vx_min: -3.0                  # PLACEHOLDER
+      vy_max: 3.0                    # PLACEHOLDER (holonomic strafe)
+      wz_max: 1.8                    # PLACEHOLDER
       iteration_count: 1
       prune_distance: 1.7
       transform_tolerance: 0.2
@@ -163,7 +121,7 @@ controller_server:
       ConstraintCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 4.0
+        cost_weight: 3.0
       GoalCritic:
         enabled: true
         cost_power: 1
@@ -182,17 +140,25 @@ controller_server:
       CostCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 3.81
+        # 3.81->2.0 (2026-05-28): stop braking for soft (non-lethal) inflated cost so the
+        # cart drives at speed past obstacles instead of crawling. Hard safety is untouched
+        # -- critical_cost 300 + collision_cost 1e6 + consider_footprint still hard-stop a
+        # real footprint collision; this only relaxes the timid slow-down in the gray zone.
+        cost_weight: 2.1
         critical_cost: 300.0
         consider_footprint: true
         collision_cost: 1000000.0
-        near_goal_distance: 1.0
+        near_goal_distance: 0.40
         trajectory_point_step: 2
       PathAlignCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 14.0
-        max_path_occupancy_ratio: 0.05
+        # 14.0->8.0 (2026-05-28): 14 glued MPPI to the global line, so when it swung out to
+        # pass an obstacle it got yanked back onto the path (into the obstacle) and stalled.
+        # 8 lets it deviate FURTHER from the original path to clear the obstacle, then
+        # re-converge. PathFollowCritic (5) still keeps it making forward progress.
+        cost_weight: 5.0
+        max_path_occupancy_ratio: 0.03
         trajectory_point_step: 4
         threshold_to_consider: 0.5
         offset_from_furthest: 20
@@ -200,7 +166,7 @@ controller_server:
       PathFollowCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 5.0
+        cost_weight: 6.0
         offset_from_furthest: 5
         threshold_to_consider: 1.4
       PathAngleCritic:
@@ -221,37 +187,108 @@ local_costmap:
       global_frame: odom
       robot_base_frame: base_link
       rolling_window: true
-      width: 4
-      height: 4
+      # 3->5 (2026-05-28): widened to a 5x5 m window (2.5 m radius) so MPPI has room to
+      # actually follow a detour once the global planner produces one. PathAlignCritic
+      # (weight 14) keeps MPPI hugging the global path; a 1.5 m window only let it nudge
+      # around thin obstacles. Lidar raytrace_max_range (3.0) still covers the new window
+      # edges. Cheap on the Pi5: 100x100 cells @ 0.05 res.
+      width: 7
+      height: 7
       resolution: 0.05
       # Footprint: real 0.725 m square, measured 2026-05-24 (axis-aligned at base_link)
       footprint: "[[0.3625, 0.3625], [0.3625, -0.3625], [-0.3625, -0.3625], [-0.3625, 0.3625]]"
       footprint_padding: 0.03
-      plugins: ["voxel_layer", "inflation_layer"]
+      plugins: ["voxel_layer", "denoise_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.45        # PLACEHOLDER
+        # 3.0->5.0 (2026-05-28): steeper decay so inflated cost is concentrated right at
+        # obstacles instead of smearing a soft "squishy" haze across the window. After the
+        # window grew 3->5 m it now sees corridor side-walls that used to be out of view;
+        # with the old soft gradient that filled the whole window with low-grade cost and
+        # MPPI felt boxed-in -> jittered in place instead of committing. Crisp gradient
+        # keeps the corridor CENTER cheap so the controller drives confidently.
+        cost_scaling_factor: 5.0
+        # Must be >= circumscribed radius (0.555 m = padded 0.725 m square's
+        # corner reach: 0.3925*sqrt(2)). Below it, MPPI's SE2 CostCritic
+        # (consider_footprint: true) loses the potential-field fast-path and
+        # full-footprint-checks every trajectory sample -> slow planning warning.
+        inflation_radius: 0.6
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: true
         publish_voxel_map: false
         origin_z: 0.0
         z_resolution: 0.1
-        z_voxels: 10
+        z_voxels: 16
         max_obstacle_height: 2.0
-        mark_threshold: 0
-        observation_sources: lidar
+        mark_threshold: 0            # 1->0->0 (2026-05-27): REVERTED back to 0. mark_threshold filters in Z
+                                     # (voxel COLUMN height): a cell marks only if >=(threshold+1) voxels stack
+                                     # in its column. A flat 2D lidar return is only ever ONE voxel tall, so
+                                     # threshold 1 silently BLINDED the lidar (scans visible, never marked).
+                                     # The denoise_layer below (minimal_group_size 2, XY-plane) is the correct
+                                     # filter for the camera's salt-and-pepper floor speckle -- it drops
+                                     # isolated cells regardless of column height. Let it do that job instead.
+        # lidar = 360deg plane (clears + marks); camera = D455 depth cloud,
+        # MARKING-ONLY for off-plane obstacles the lidar plane misses. lidar
+        # does all clearing (see camera block below).
+        observation_sources: lidar camera
         lidar:
           topic: /scan
           max_obstacle_height: 2.0
           clearing: true
           marking: true
           data_type: "LaserScan"
-          raytrace_max_range: 12.0
+          raytrace_max_range: 3.0
           raytrace_min_range: 0.0
-          obstacle_max_range: 10.0
-          obstacle_min_range: 0.0
+          obstacle_max_range: 3.0
+          # 0.0->0.45 (2026-05-28): the lidar sits in the swerve-module plane and
+          # hits the robot's own structure at ~0.28 m (~13 deg L-of-front), marking
+          # a lethal cell on base_link -> MPPI's footprint CostCritic sees a self-
+          # collision and crawls. 0.45 m > the 0.3925 m padded half-footprint, so
+          # self-returns are never marked. raytrace_min_range stays 0.0 (still clear).
+          obstacle_min_range: 0.45
+          # inf_is_valid (2026-05-28): no-return beams arrive as +inf (confirmed
+          # 133/720 beams inf on /scan). Default false DROPS them, so open
+          # directions cast NO clearing ray -- a phantom out in open space is
+          # never raytraced clear and only vanishes when it scrolls out of the
+          # rolling window. true converts each inf beam to a max-range clearing
+          # ray (clamped to raytrace_max_range 3.0). NaN'd post sectors are
+          # untouched by this (NaN != inf), so the blind spots stay blind.
+          inf_is_valid: true
+        # ---- D455 depth cloud: off-plane obstacles the lidar plane misses ----
+        # MARKING + bounded CLEARING (2026-05-28): the camera must clear its OWN
+        # marks. The lidar is a flat 2D plane, so its raytrace only clears voxels
+        # at the lidar's Z slice -- it can NEVER reach camera marks up at
+        # z=0.25..1.6 m. With clearing:false those off-plane marks were immortal,
+        # only vanishing when they scrolled out of the rolling window. clearing
+        # raytrace is capped at the 1.5 m window radius to limit the narrow
+        # ~87deg FOV erasing obstacles seen off to the side. Confirm the cloud is
+        # actually flowing first (arm64 pointcloud quirk -- see sensors.launch.py).
+        camera:
+          topic: /camera/camera/depth/color/points
+          data_type: "PointCloud2"
+          marking: true
+          clearing: true
+          raytrace_max_range: 1.5
+          raytrace_min_range: 0.3
+          # min_obstacle_height EXCLUDES the floor: camera is 0.674 m high,
+          # pitched 10deg down, so the floor fills the lower frame from ~0.8 m
+          # out. Without this filter the planner treats the floor as a wall.
+          # PLACEHOLDER: drive empty floor, confirm no phantom obstacles, tune.
+          min_obstacle_height: 0.25   # 0.20->0.25 (2026-05-27): lift floor filter above the noisy
+                                      # grazing-angle floor band. Lidar plane covers low obstacles anyway.
+          max_obstacle_height: 2.0
+          obstacle_max_range: 1.5     # 2.5->1.5 (2026-05-27): the local window is only 1.5 m in
+                                      # radius, so marking past it is wasted work AND pulls in the
+                                      # noisiest far floor. Cap at the window radius.
+          obstacle_min_range: 0.3     # PLACEHOLDER (D455 min depth)
+      # Removes isolated/standalone marked cells (salt-and-pepper from lidar/camera
+      # noise) before inflation. Runs AFTER voxel_layer, BEFORE inflation_layer.
+      denoise_layer:
+        plugin: "nav2_costmap_2d::DenoiseLayer"
+        enabled: true
+        minimal_group_size: 2         # drop obstacle blobs smaller than 2 connected cells
+        group_connectivity_type: 8    # 8-connected (diagonals count as neighbors)
       always_send_full_costmap: true
 
 global_costmap:
@@ -267,27 +304,68 @@ global_costmap:
       footprint: "[[0.3625, 0.3625], [0.3625, -0.3625], [-0.3625, -0.3625], [-0.3625, 0.3625]]"
       footprint_padding: 0.03
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
-      obstacle_layer:
-        plugin: "nav2_costmap_2d::ObstacleLayer"
-        enabled: true
-        observation_sources: lidar
-        lidar:
-          topic: /scan
-          max_obstacle_height: 2.0
-          clearing: true
-          marking: true
-          data_type: "LaserScan"
-          raytrace_max_range: 12.0
-          raytrace_min_range: 0.0
-          obstacle_max_range: 10.0
-          obstacle_min_range: 0.0
+      # obstacle_layer re-added 2026-05-28 (was removed 2026-05-27): without it the global
+      # planner was blind to obstacles not in the saved map, so it kept drawing the path
+      # straight through them and MPPI -- a path FOLLOWER, not a planner -- stalled against
+      # something only the LOCAL costmap could see, then burned recovery behaviors and
+      # failed the goal. Re-adding it lets the 1 Hz global replan REROUTE around new
+      # obstacles. The 2026-05-27 removal was to kill "ghost" marks (a non-rolling full-map
+      # costmap never scrolls, so any mark the robot didn't later raytrace straight through
+      # -- a passer-by, scan spike, or phantom stamped during bad localization -- became
+      # PERMANENT and blocked the planner forever). The block below is tuned to self-heal
+      # those instead: inf_is_valid clears open directions, lidar-only avoids un-clearable
+      # off-plane camera marks, and clearing range >= marking range so every mark CAN clear.
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: true
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        # combination_method 1 (Max): overlay live marks on top of the static-map walls,
+        # keeping BOTH -- never let a transient clear erase a real mapped wall.
+        combination_method: 1
+        # lidar ONLY here. The camera marks off-plane obstacles (z=0.25..1.6 m), but this
+        # is a flat 2D layer that clears by raytracing the lidar's single plane -- it could
+        # NEVER raytrace a camera mark clear, so those marks would be immortal ghosts. The
+        # camera stays local-costmap-only (the rolling window scrolls its marks away).
+        observation_sources: lidar
+        lidar:
+          topic: /scan
+          data_type: "LaserScan"
+          marking: true
+          clearing: true
+          # inf_is_valid: same fix as the local costmap. No-return beams arrive as +inf;
+          # default false DROPS them so open directions cast no clearing ray -- and because
+          # this costmap never scrolls, a phantom in open space would stay FOREVER. true
+          # converts each inf beam into a max-range clearing ray (clamped to
+          # raytrace_max_range), so open space self-clears every replan.
+          inf_is_valid: true
+          # 0.45 m: reject the lidar's returns off the robot's own swerve-module structure
+          # (~0.28 m), same self-collision fix as the local costmap's lidar block.
+          obstacle_min_range: 0.45
+          # Only MARK out to 4 m -- where localization is still trustworthy; marking far-out
+          # returns in the map frame during a localization wobble is exactly what stamped
+          # ghosts before. CLEAR out to 5 m (>= the 4 m marking range) so every mark this
+          # layer can place, it can also raytrace clear.
+          obstacle_max_range: 4.0
+          raytrace_min_range: 0.0
+          raytrace_max_range: 5.0
+        # NOTE: if a ghost still survives (bad raytrace geometry), the robust backstop is a
+        # periodic ClearEntireCostmap / clear-around-robot service call on the global
+        # costmap from the BT or a small timer node -- that's node/launch wiring, not config,
+        # so it's intentionally left out here. Try this self-healing config in the building
+        # first and only add the periodic clear if ghosts actually reappear.
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.55        # PLACEHOLDER
+        # 3.0->2.0 (2026-05-28): gentler/broader gradient so the PLANNER prefers the center
+        # of free space and bows the planned path AROUND obstacles with more clearance --
+        # fixes the "path hugged the obstacle, MPPI swung out then got trapped between the
+        # obstacle cost and PathAlign pulling it back" stall. Done via cost_scaling, NOT a
+        # bigger inflation_radius on purpose: radius stays 0.6 because raising it would
+        # demand ~1.5 m clearance and the elevator cab is only ~1.4 m -> a wider radius
+        # could make cab entry unplannable. Broad gradient buys clearance without that risk.
+        cost_scaling_factor: 2.0
+        inflation_radius: 0.6         # >= circumscribed radius 0.555 m (see local_costmap note)
       always_send_full_costmap: true
 
 map_server:
@@ -369,8 +447,8 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [0.5, 0.5, 1.5]    # PLACEHOLDER [vx, vy, wz]
-    min_velocity: [-0.35, -0.5, -1.5]
+    max_velocity: [3.0, 3.0, 2.0]    # PLACEHOLDER [vx, vy, wz]
+    min_velocity: [-3.0, -3.0, -2.0]
     max_accel: [1.0, 1.0, 2.0]       # PLACEHOLDER
     max_decel: [-1.0, -1.0, -2.0]    # PLACEHOLDER
     odom_topic: "odom"
