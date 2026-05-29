@@ -21,7 +21,8 @@ problems during bring-up — e.g. enable_nav2:=false to test just SLAM.
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument, IncludeLaunchDescription, TimerAction)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
@@ -97,56 +98,73 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration('enable_nt_bridge')),
         ),
 
-        # ---- slam_toolbox ----
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(slam_launch),
-            condition=IfCondition(LaunchConfiguration('enable_slam')),
-            launch_arguments={
-                'use_sim_time': use_sim_time,
-                'slam_mode': LaunchConfiguration('slam_mode'),
-                'map': LaunchConfiguration('map'),
-            }.items(),
-        ),
+        # ---- STARTUP STAGGER ----------------------------------------------
+        # The Orange Pi 5 can't absorb ~19 nodes spawning at the same instant:
+        # the concurrent plugin dlopen() + DDS discovery storm SIGSEGVs
+        # bt_navigator (and SIGABRTs twist_mux), which silently leaves the
+        # whole Nav2 lifecycle stuck 'inactive' -> costmaps/plans advertise
+        # but never publish. So bring things up in dependency order with
+        # TimerAction delays: foundation (description/sensors/nt_bridge) at
+        # t=0 above, then SLAM, then the heavy Nav2 stack, then the rest.
+        # Bump these periods up if a node still dies during bring-up.
 
-        # ---- nav2 ----
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(nav2_launch),
-            condition=IfCondition(LaunchConfiguration('enable_nav2')),
-            launch_arguments={'use_sim_time': use_sim_time}.items(),
-        ),
+        # ---- slam_toolbox (t=3s: needs /odom + /scan + TF flowing first) ---
+        TimerAction(period=3.0, actions=[
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(slam_launch),
+                condition=IfCondition(LaunchConfiguration('enable_slam')),
+                launch_arguments={
+                    'use_sim_time': use_sim_time,
+                    'slam_mode': LaunchConfiguration('slam_mode'),
+                    'map': LaunchConfiguration('map'),
+                }.items(),
+            ),
+        ]),
 
-        # ---- twist_mux (arbitrates nav vs dock onto /cmd_vel) ----
-        Node(
-            package='twist_mux',
-            executable='twist_mux',
-            name='twist_mux',
-            output='screen',
-            parameters=[twist_mux_config, {'use_sim_time': use_sim_time}],
-            remappings=[('cmd_vel_out', 'cmd_vel')],
-            condition=IfCondition(LaunchConfiguration('enable_twist_mux')),
-        ),
+        # ---- nav2 (t=7s: heaviest BT/plugin dlopen group; give it a clear
+        #      window after the sensor+SLAM startup spike has settled) -------
+        TimerAction(period=7.0, actions=[
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(nav2_launch),
+                condition=IfCondition(LaunchConfiguration('enable_nav2')),
+                launch_arguments={'use_sim_time': use_sim_time}.items(),
+            ),
+        ]),
 
-        # ---- dock controller (optional) ----
-        Node(
-            package='cart_elevator',
-            executable='dock_controller',
-            name='dock_controller',
-            output='screen',
-            parameters=[dock_config, {'use_sim_time': use_sim_time}],
-            condition=IfCondition(LaunchConfiguration('enable_dock')),
-        ),
-
-        # ---- foxglove bridge ----
-        Node(
-            package='foxglove_bridge',
-            executable='foxglove_bridge',
-            name='foxglove_bridge',
-            output='screen',
-            parameters=[{
-                'port': 8765,
-                'address': '0.0.0.0',
-                'use_sim_time': use_sim_time,
-            }],
-            condition=IfCondition(LaunchConfiguration('enable_foxglove')),
-        ),
+        # ---- twist_mux + dock + foxglove (t=10s: after Nav2 is up) ---------
+        TimerAction(period=10.0, actions=[
+            # twist_mux arbitrates nav vs recovery vs dock onto /cmd_vel
+            Node(
+                package='twist_mux',
+                executable='twist_mux',
+                name='twist_mux',
+                output='screen',
+                parameters=[twist_mux_config, {'use_sim_time': use_sim_time}],
+                remappings=[('cmd_vel_out', 'cmd_vel')],
+                condition=IfCondition(LaunchConfiguration('enable_twist_mux')),
+            ),
+            # dock controller (optional)
+            Node(
+                package='cart_elevator',
+                executable='dock_controller',
+                name='dock_controller',
+                output='screen',
+                parameters=[dock_config, {'use_sim_time': use_sim_time}],
+                condition=IfCondition(LaunchConfiguration('enable_dock')),
+            ),
+            # foxglove bridge (viz; subscribes broadly so keep it off the
+            # critical Nav2 startup window)
+            Node(
+                package='foxglove_bridge',
+                executable='foxglove_bridge',
+                name='foxglove_bridge',
+                output='screen',
+                parameters=[{
+                    'port': 8765,
+                    'address': '0.0.0.0',
+                    'use_sim_time': use_sim_time,
+                }],
+                condition=IfCondition(LaunchConfiguration('enable_foxglove')),
+            ),
+        ]),
     ])
