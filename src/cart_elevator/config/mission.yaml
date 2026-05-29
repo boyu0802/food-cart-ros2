@@ -8,8 +8,19 @@
 cart_supervisor:
   ros__parameters:
     tick_rate_hz: 5.0
-    target_floor: 4
-    starting_floor: 1     # where the kitchen is — safe gate uses this during hallway WAIT
+    target_floor: 1       # floor button we press in-cab (going 4 -> 1)
+    starting_floor: 4     # floor we call the elevator from
+
+    # --- Sub-mission framing ---
+    # Test A (floor 4, 2026-05-29): call -> enter -> in-cab align -> press 1.
+    #   IDLE --start--> DOCK_HALLWAY_CALL -> PRESS_CALL_BUTTON ->
+    #   WAIT_FOR_HALLWAY_DOOR_OPEN -> NAV_INTO_CAB -> DOCK_IN_CAB_BUTTON ->
+    #   PRESS_FLOOR_BUTTON -> parks at WAIT_FOR_FLOOR_REACHED (end of Test A).
+    # Test B (floor 1): set first_state: WAIT_FOR_FLOOR_REACHED to start in the
+    #   cab and auto-exit on door open.
+    # Full pickup->ride->dropoff run: NAV_TO_PICKUP / RELOCALIZE_AT_FLOOR.
+    first_state: DOCK_HALLWAY_CALL
+    after_cab_exit: DONE
 
     # Tag IDs — distinct from floor-detector tags (which live at 100+offset).
     pickup_tag_id: 200

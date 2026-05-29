@@ -150,6 +150,13 @@ class MissionConfig:
     # gate during the hallway WAIT — we're waiting for the elevator
     # to arrive at THIS floor, not the destination.
     starting_floor: int = 1
+    # Sub-mission framing. Default is the full pickup→ride→dropoff run.
+    # The ride-only bring-up demo sets first_state=DOCK_HALLWAY_CALL
+    # (cart starts parked at the hallway panel, skip pickup/loading) and
+    # after_cab_exit=DONE (stop once we've driven out of the cab, skip
+    # relocalize/dropoff/map-swap).
+    first_state: 'State' = None        # IDLE transitions here on start
+    after_cab_exit: 'State' = None     # NAV_OUT_OF_CAB transitions here
     # Tag IDs. Real values come from yaml at deploy time.
     pickup_tag_id: int = 200
     hallway_panel_tag_id: int = 210
@@ -162,6 +169,14 @@ class MissionConfig:
     into_cab_pose: tuple = ('map', 0.0, 0.0, 0.0)
     out_of_cab_pose: tuple = ('map', 0.0, 0.0, 0.0)
     dropoff_approach_pose: tuple = ('map', 0.0, 0.0, 0.0)
+
+    def __post_init__(self) -> None:
+        # Can't reference State in the field default (forward ref), so
+        # resolve the None sentinels to the full-mission defaults here.
+        if self.first_state is None:
+            self.first_state = State.NAV_TO_PICKUP
+        if self.after_cab_exit is None:
+            self.after_cab_exit = State.RELOCALIZE_AT_FLOOR
 
 
 class Mission:
@@ -226,7 +241,7 @@ class Mission:
                 return State.FAULT
 
         if cur == State.IDLE:
-            return State.NAV_TO_PICKUP if s.start_pressed else cur
+            return self.cfg.first_state if s.start_pressed else cur
 
         if cur == State.NAV_TO_PICKUP:
             return State.DOCK_PICKUP if s.nav_succeeded else cur
@@ -261,7 +276,7 @@ class Mission:
             return State.NAV_OUT_OF_CAB if s.safe_to_enter else cur
 
         if cur == State.NAV_OUT_OF_CAB:
-            return State.RELOCALIZE_AT_FLOOR if s.nav_succeeded else cur
+            return self.cfg.after_cab_exit if s.nav_succeeded else cur
         if cur == State.RELOCALIZE_AT_FLOOR:
             return (State.NAV_TO_DROPOFF
                     if s.current_map_floor == self.cfg.target_floor else cur)
