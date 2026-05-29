@@ -56,12 +56,20 @@ class SafeToEnterGate(Node):
             ('publish_rate_hz', 5.0),
             # If no /elevator/inside_clear publisher exists, assume clear.
             ('inside_clear_default', True),
+            # Drop the direction / floor preconditions from the AND. Lets a
+            # bring-up run gate on DOOR==OPEN alone while the direction
+            # detector (placeholder) and floor detector aren't trustworthy.
+            # Door is always required. Keep both True for the real mission.
+            ('require_direction', True),
+            ('require_floor', True),
         ])
         gp = lambda n: self.get_parameter(n).value
         self.target_floor = int(gp('target_floor'))
         self.max_age = float(gp('max_age_s'))
         self.min_conf = float(gp('min_confidence'))
         self.inside_default = bool(gp('inside_clear_default'))
+        self.require_direction = bool(gp('require_direction'))
+        self.require_floor = bool(gp('require_floor'))
 
         self.last_door: DoorState | None = None
         self.last_dir: ElevatorDirection | None = None
@@ -121,20 +129,22 @@ class SafeToEnterGate(Node):
             return False, (f'door state={self.last_door.state} '
                            f'conf={self.last_door.confidence:.2f}')
 
-        if not self._fresh(self.last_dir):
-            return False, 'direction stale or missing'
-        if (self.last_dir.direction != ElevatorDirection.DIRECTION_IDLE
-                or self.last_dir.confidence < self.min_conf):
-            return False, (f'direction={self.last_dir.direction} '
-                           f'conf={self.last_dir.confidence:.2f}')
+        if self.require_direction:
+            if not self._fresh(self.last_dir):
+                return False, 'direction stale or missing'
+            if (self.last_dir.direction != ElevatorDirection.DIRECTION_IDLE
+                    or self.last_dir.confidence < self.min_conf):
+                return False, (f'direction={self.last_dir.direction} '
+                               f'conf={self.last_dir.confidence:.2f}')
 
-        if not self._fresh(self.last_floor):
-            return False, 'floor stale or missing'
-        if self.last_floor.floor != self.target_floor:
-            return False, (f'floor={self.last_floor.floor} '
-                           f'!= target={self.target_floor}')
-        if self.last_floor.confidence < self.min_conf:
-            return False, f'floor conf={self.last_floor.confidence:.2f}'
+        if self.require_floor:
+            if not self._fresh(self.last_floor):
+                return False, 'floor stale or missing'
+            if self.last_floor.floor != self.target_floor:
+                return False, (f'floor={self.last_floor.floor} '
+                               f'!= target={self.target_floor}')
+            if self.last_floor.confidence < self.min_conf:
+                return False, f'floor conf={self.last_floor.confidence:.2f}'
 
         if not self._current_inside_clear():
             return False, 'inside not clear'
