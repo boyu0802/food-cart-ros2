@@ -15,7 +15,7 @@ nt_bridge:
 
     # ===== ROS2 topic names =====
     cmd_vel_topic: "/cmd_vel"
-    cmd_vel_stamped: false        # set true if Nav2 publishes TwistStamped
+    cmd_vel_stamped: false        # whole pipeline is unstamped Twist (Nav2 + dock + twist_mux use_stamped:false)
     cmd_vel_max_age: 0.5          # secs without /cmd_vel before bridge sends zeros (safety)
 
     odom_topic: "/odom"
