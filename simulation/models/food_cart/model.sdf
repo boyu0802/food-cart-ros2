@@ -1,0 +1,308 @@
+<?xml version="1.0" ?>
+<!-- Food Cart Robot Model - Matches URDF exactly -->
+<!-- Constants from cart.urdf.xacro: chassis 0.725m square, 0.628m tall, 20kg -->
+<sdf version="1.9">
+  <model name="food_cart">
+    <!-- model origin at ground level + 0.042m clearance -->
+    <pose>0 0 0.042 0 0 0</pose>
+
+    <!-- ============================================================ -->
+    <!-- base_link (main chassis)                                       -->
+    <!-- ============================================================ -->
+    <link name="base_link">
+      <pose>0 0 0 0 0 0</pose>
+
+      <!-- Inertial properties: 20kg, symmetric -->
+      <inertial>
+        <mass>20.0</mass>
+        <pose>0 0 0.314 0 0 0</pose>  <!-- CoM at half height -->
+        <inertia>
+          <ixx>0.8</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.8</iyy>
+          <iyz>0</iyz>
+          <izz>0.8</izz>
+        </inertia>
+      </inertial>
+
+      <!-- Chassis collision box: 0.725m x 0.725m x 0.628m -->
+      <collision name="chassis_collision">
+        <pose>0 0 0.314 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.725 0.725 0.628</size>
+          </box>
+        </geometry>
+      </collision>
+
+      <!-- Chassis visual -->
+      <visual name="chassis_visual">
+        <pose>0 0 0.314 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.725 0.725 0.628</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.2 0.2 0.6 1.0</ambient>
+          <diffuse>0.2 0.2 0.6 1.0</diffuse>
+        </material>
+      </visual>
+
+      <!-- Lidar: C1, 0.151155m above base_link (0.193155 AGL), yawed 180° (rear-facing) -->
+      <sensor name="lidar" type="gpu_lidar">
+        <pose>0 0 0.151155 0 0 3.14159265</pose>
+        <topic>/scan_raw</topic>
+        <update_rate>10</update_rate>
+        <lidar>
+          <scan>
+            <horizontal>
+              <samples>720</samples>
+              <resolution>0.5</resolution>
+              <min_angle>-3.14159265</min_angle>
+              <max_angle>3.14159265</max_angle>
+            </horizontal>
+            <vertical>
+              <samples>1</samples>
+            </vertical>
+          </scan>
+          <range>
+            <min>0.12</min>
+            <max>12.0</max>
+            <resolution>0.01</resolution>
+          </range>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>0.01</stddev>
+          </noise>
+        </lidar>
+        <always_on>true</always_on>
+        <visualize>true</visualize>
+      </sensor>
+
+      <!-- D455 depth camera: pitched 10° down (0.174533 rad) -->
+      <sensor name="depth_camera" type="depth_camera">
+        <pose>0.320971 -0.051429 0.674455 0 0.174533 0</pose>
+        <topic>/camera/depth/image</topic>
+        <update_rate>15</update_rate>
+        <camera>
+          <horizontal_fov>1.51844</horizontal_fov>  <!-- 87° -->
+          <image>
+            <width>480</width>
+            <height>270</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.1</near>
+            <far>10.0</far>
+          </clip>
+        </camera>
+        <depth_camera>
+          <output>depths</output>
+        </depth_camera>
+        <always_on>true</always_on>
+      </sensor>
+
+      <!-- D455 point cloud output -->
+      <sensor name="depth_points" type="depth_camera">
+        <pose>0.320971 -0.051429 0.674455 0 0.174533 0</pose>
+        <topic>/camera/depth/color/points</topic>
+        <update_rate>15</update_rate>
+        <camera>
+          <horizontal_fov>1.51844</horizontal_fov>
+          <image>
+            <width>480</width>
+            <height>270</height>
+          </image>
+        </camera>
+        <point_cloud>
+          <colorize>true</colorize>
+        </point_cloud>
+        <always_on>true</always_on>
+      </sensor>
+
+      <!-- IMU at base_link origin -->
+      <sensor name="imu" type="imu">
+        <pose>0 0 0 0 0 0</pose>
+        <topic>/imu_raw</topic>
+        <update_rate>100</update_rate>
+        <imu>
+          <angular_velocity>
+            <x><noise type="gaussian"><mean>0.0</mean><stddev>0.01</stddev></noise></x>
+            <y><noise type="gaussian"><mean>0.0</mean><stddev>0.01</stddev></noise></y>
+            <z><noise type="gaussian"><mean>0.0</mean><stddev>0.01</stddev></noise></z>
+          </angular_velocity>
+          <linear_acceleration>
+            <x><noise type="gaussian"><mean>0.0</mean><stddev>0.015</stddev></noise></x>
+            <y><noise type="gaussian"><mean>0.0</mean><stddev>0.015</stddev></noise></y>
+            <z><noise type="gaussian"><mean>0.0</mean><stddev>0.015</stddev></noise></z>
+          </linear_acceleration>
+        </imu>
+        <always_on>true</always_on>
+      </sensor>
+    </link>
+
+    <!-- ============================================================ -->
+    <!-- Wheels (4 mecanum wheels for holonomic drive)                  -->
+    <!-- ============================================================ -->
+
+    <!-- Front-left wheel -->
+    <link name="front_left_wheel">
+      <pose>0.30 0.30 0 0 0 0</pose>
+      <inertial>
+        <mass>0.5</mass>
+        <inertia>
+          <ixx>0.001</ixx><iyy>0.001</iyy><izz>0.001</izz>
+        </inertia>
+      </inertial>
+      <collision name="collision">
+        <geometry>
+          <sphere><radius>0.05</radius></sphere>
+        </geometry>
+      </collision>
+      <visual name="visual">
+        <geometry>
+          <sphere><radius>0.05</radius></sphere>
+        </geometry>
+        <material>
+          <ambient>0.1 0.1 0.1 1.0</ambient>
+        </material>
+      </visual>
+    </link>
+
+    <!-- Front-right wheel -->
+    <link name="front_right_wheel">
+      <pose>0.30 -0.30 0 0 0 0</pose>
+      <inertial>
+        <mass>0.5</mass>
+        <inertia>
+          <ixx>0.001</ixx><iyy>0.001</iyy><izz>0.001</izz>
+        </inertia>
+      </inertial>
+      <collision name="collision">
+        <geometry>
+          <sphere><radius>0.05</radius></sphere>
+        </geometry>
+      </collision>
+      <visual name="visual">
+        <geometry>
+          <sphere><radius>0.05</radius></sphere>
+        </geometry>
+        <material>
+          <ambient>0.1 0.1 0.1 1.0</ambient>
+        </material>
+      </visual>
+    </link>
+
+    <!-- Rear-left wheel -->
+    <link name="rear_left_wheel">
+      <pose>-0.30 0.30 0 0 0 0</pose>
+      <inertial>
+        <mass>0.5</mass>
+        <inertia>
+          <ixx>0.001</ixx><iyy>0.001</iyy><izz>0.001</izz>
+        </inertia>
+      </inertial>
+      <collision name="collision">
+        <geometry>
+          <sphere><radius>0.05</radius></sphere>
+        </geometry>
+      </collision>
+      <visual name="visual">
+        <geometry>
+          <sphere><radius>0.05</radius></sphere>
+        </geometry>
+        <material>
+          <ambient>0.1 0.1 0.1 1.0</ambient>
+        </material>
+      </visual>
+    </link>
+
+    <!-- Rear-right wheel -->
+    <link name="rear_right_wheel">
+      <pose>-0.30 -0.30 0 0 0 0</pose>
+      <inertial>
+        <mass>0.5</mass>
+        <inertia>
+          <ixx>0.001</ixx><iyy>0.001</iyy><izz>0.001</izz>
+        </inertia>
+      </inertial>
+      <collision name="collision">
+        <geometry>
+          <sphere><radius>0.05</radius></sphere>
+        </geometry>
+      </collision>
+      <visual name="visual">
+        <geometry>
+          <sphere><radius>0.05</radius></sphere>
+        </geometry>
+        <material>
+          <ambient>0.1 0.1 0.1 1.0</ambient>
+        </material>
+      </visual>
+    </link>
+
+    <!-- Wheel joints (continuous rotation) -->
+    <joint name="front_left_wheel_joint" type="continuous">
+      <parent>base_link</parent>
+      <child>front_left_wheel</child>
+      <axis>
+        <xyz>0 1 0</xyz>
+        <dynamics><damping>0.1</damping></dynamics>
+      </axis>
+    </joint>
+    <joint name="front_right_wheel_joint" type="continuous">
+      <parent>base_link</parent>
+      <child>front_right_wheel</child>
+      <axis>
+        <xyz>0 1 0</xyz>
+        <dynamics><damping>0.1</damping></dynamics>
+      </axis>
+    </joint>
+    <joint name="rear_left_wheel_joint" type="continuous">
+      <parent>base_link</parent>
+      <child>rear_left_wheel</child>
+      <axis>
+        <xyz>0 1 0</xyz>
+        <dynamics><damping>0.1</damping></dynamics>
+      </axis>
+    </joint>
+    <joint name="rear_right_wheel_joint" type="continuous">
+      <parent>base_link</parent>
+      <child>rear_right_wheel</child>
+      <axis>
+        <xyz>0 1 0</xyz>
+        <dynamics><damping>0.1</damping></dynamics>
+      </axis>
+    </joint>
+
+    <!-- ============================================================ -->
+    <!-- Drive plugin (Mecanum = holonomic/fully-omni)                  -->
+    <!-- ============================================================ -->
+    <plugin filename="gz-sim-mecanum-drive-system" name="gz::sim::systems::MecanumDrive">
+      <wheel_separation>0.60</wheel_separation>
+      <wheel_radius>0.05</wheel_radius>
+      <left_front_joint>front_left_wheel_joint</left_front_joint>
+      <right_front_joint>front_right_wheel_joint</right_front_joint>
+      <left_rear_joint>rear_left_wheel_joint</left_rear_joint>
+      <right_rear_joint>rear_right_wheel_joint</right_rear_joint>
+      <topic>/cmd_vel</topic>
+      <max_linear_velocity>3.0</max_linear_velocity>
+      <max_angular_velocity>1.8</max_angular_velocity>
+      <linear_acceleration>1.0</linear_acceleration>
+      <angular_acceleration>1.0</angular_acceleration>
+    </plugin>
+
+    <!-- Odometry publisher -->
+    <plugin filename="gz-sim-odometry-publisher" name="gz::sim::systems::OdometryPublisher">
+      <odom_topic>/odom</odom_topic>
+      <odom_frame>odom</odom_frame>
+      <robot_base_frame>base_link</robot_base_frame>
+      <dimensions>2d</dimensions>
+      <odom_publish_frequency>50</odom_publish_frequency>
+    </plugin>
+
+  </model>
+</sdf>

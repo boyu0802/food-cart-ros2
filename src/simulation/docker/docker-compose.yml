@@ -1,0 +1,110 @@
+# Docker Compose for Food Cart simulation
+# Three services: sim (Gazebo), nav (Nav2 + SLAM + cart_elevator), foxglove (visualization)
+#
+# Usage:
+#   docker compose build
+#   docker compose up
+#
+# Then open Foxglove Studio and connect to ws://localhost:8765
+
+services:
+  # ===========================================
+  # Simulation service - runs Gazebo Harmonic
+  # ===========================================
+  sim:
+    build:
+      context: ../..
+      dockerfile: simulation/docker/Dockerfile
+    container_name: food_cart_sim
+    command: >
+      bash -c "
+        source /opt/ros/jazzy/setup.bash &&
+        colcon build --symlink-install &&
+        source install/setup.bash &&
+        ros2 launch simulation sim.launch.py
+      "
+    environment:
+      - ROS_DOMAIN_ID=0
+      - ROS_LOCALHOST_ONLY=1
+      - DISPLAY=${DISPLAY}
+      - WAYLAND_DISPLAY=${WAYLAND_DISPLAY}
+      - XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}
+      - PULSE_SERVER=${PULSE_SERVER}
+    volumes:
+      - ../..:/ros2_ws:cached
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${XDG_RUNTIME_DIR:-/tmp}/${WAYLAND_DISPLAY:-wayland-0}:${XDG_RUNTIME_DIR:-/tmp}/${WAYLAND_DISPLAY:-wayland-0}:rw
+    ports:
+      - "7400:7400"  # Gazebo GUI
+      - "7401:7401"  # Gazebo Transport
+    networks:
+      - ros_net
+    privileged: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ===========================================
+  # Navigation service - Nav2 + SLAM + mission
+  # ===========================================
+  nav:
+    build:
+      context: ../..
+      dockerfile: simulation/docker/Dockerfile
+    container_name: food_cart_nav
+    depends_on:
+      sim:
+        condition: service_started
+    command: >
+      bash -c "
+        source /opt/ros/jazzy/setup.bash &&
+        source /ros2_ws/install/setup.bash &&
+        ros2 launch simulation nav_sim.launch.py
+      "
+    environment:
+      - ROS_DOMAIN_ID=0
+      - ROS_LOCALHOST_ONLY=1
+      - USE_SIM_TIME=true
+    volumes:
+      - ../..:/ros2_ws:cached
+    networks:
+      - ros_net
+    privileged: true
+
+  # ===========================================
+  # Foxglove bridge service - visualization
+  # ===========================================
+  foxglove:
+    build:
+      context: ../..
+      dockerfile: simulation/docker/Dockerfile
+    container_name: food_cart_foxglove
+    depends_on:
+      sim:
+        condition: service_started
+    command: >
+      bash -c "
+        source /opt/ros/jazzy/setup.bash &&
+        source /ros2_ws/install/setup.bash &&
+        ros2 run foxglove_bridge foxglove_bridge --port 8765
+      "
+    environment:
+      - ROS_DOMAIN_ID=0
+      - ROS_LOCALHOST_ONLY=1
+    ports:
+      - "8765:8765"  # WebSocket for Foxglove Studio
+    networks:
+      - ros_net
+
+networks:
+  ros_net:
+    driver: bridge
+
+# For GPU passthrough on Windows with WSL2, ensure:
+# 1. NVIDIA Container Toolkit is installed on Windows
+# 2. Docker Desktop is configured for WSL2 backend
+# 3. nvidia-docker runtime is available

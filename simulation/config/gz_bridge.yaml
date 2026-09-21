@@ -1,0 +1,154 @@
+# ROS-Gazebo Bridge Configuration for Food Cart Simulation
+# YAML format for ros_gz_bridge parameter_bridge config_file
+
+bridge:
+  # =============================
+  # Robot sensor topics (Gazebo -> ROS)
+  # =============================
+
+  # Lidar scan — bridged as /scan_raw; scan_sector_filter processes → /scan
+  - ros_topic_name: scan_raw
+    gz_topic_name: /scan_raw
+    direction: GZ_TO_ROS
+    ros_type_name: sensor_msgs/msg/LaserScan
+    gz_type_name: gz.msgs.LaserScan
+
+  # Depth camera image
+  - ros_topic_name: camera/depth/image
+    gz_topic_name: /camera/depth/image
+    direction: GZ_TO_ROS
+    ros_type_name: sensor_msgs/msg/Image
+    gz_type_name: gz.msgs.Image
+
+  # Depth camera point cloud
+  - ros_topic_name: camera/depth/color/points
+    gz_topic_name: /camera/depth/color/points
+    direction: GZ_TO_ROS
+    ros_type_name: sensor_msgs/msg/PointCloud2
+    gz_type_name: gz.msgs.PointCloudPacked
+
+  # IMU
+  - ros_topic_name: imu_raw
+    gz_topic_name: /imu_raw
+    direction: GZ_TO_ROS
+    ros_type_name: sensor_msgs/msg/Imu
+    gz_type_name: gz.msgs.IMU
+
+  # Odometry
+  - ros_topic_name: odom
+    gz_topic_name: /odom
+    direction: GZ_TO_ROS
+    ros_type_name: nav_msgs/msg/Odometry
+    gz_type_name: gz.msgs.Odometry
+
+  # Model pose → TF
+  - ros_topic_name: tf
+    gz_topic_name: /model/food_cart/pose
+    direction: GZ_TO_ROS
+    ros_type_name: tf2_msgs/msg/TFMessage
+    gz_type_name: gz.msgs.Pose_V
+
+  # =============================
+  # Robot command topics (ROS -> Gazebo)
+  # =============================
+
+  # Velocity commands
+  - ros_topic_name: cmd_vel
+    gz_topic_name: /cmd_vel
+    direction: ROS_TO_GZ
+    ros_type_name: geometry_msgs/msg/Twist
+    gz_type_name: gz.msgs.Twist
+
+  # =============================
+  # Elevator joint commands (ROS -> Gazebo)
+  # =============================
+
+  # Elevator platform prismatic joint
+  - ros_topic_name: model/elevator_cab/joint/elevator_joint/0/cmd_pos
+    gz_topic_name: /model/elevator_cab/joint/elevator_joint/0/cmd_pos
+    direction: ROS_TO_GZ
+    ros_type_name: std_msgs/msg/Float64
+    gz_type_name: gz.msgs.Double
+
+  # Elevator platform position feedback
+  - ros_topic_name: model/elevator_cab/joint/elevator_joint/0/pos
+    gz_topic_name: /model/elevator_cab/joint/elevator_joint/0/pos
+    direction: GZ_TO_ROS
+    ros_type_name: std_msgs/msg/Float64
+    gz_type_name: gz.msgs.Double
+
+  # Floor 1 door left
+  - ros_topic_name: model/elevator_door_f1/joint/door_f1_left_joint/0/cmd_pos
+    gz_topic_name: /model/elevator_door_f1/joint/door_f1_left_joint/0/cmd_pos
+    direction: ROS_TO_GZ
+    ros_type_name: std_msgs/msg/Float64
+    gz_type_name: gz.msgs.Double
+
+  # Floor 1 door right
+  - ros_topic_name: model/elevator_door_f1/joint/door_f1_right_joint/0/cmd_pos
+    gz_topic_name: /model/elevator_door_f1/joint/door_f1_right_joint/0/cmd_pos
+    direction: ROS_TO_GZ
+    ros_type_name: std_msgs/msg/Float64
+    gz_type_name: gz.msgs.Double
+
+  # Floor 1 door left feedback
+  - ros_topic_name: model/elevator_door_f1/joint/door_f1_left_joint/0/pos
+    gz_topic_name: /model/elevator_door_f1/joint/door_f1_left_joint/0/pos
+    direction: GZ_TO_ROS
+    ros_type_name: std_msgs/msg/Float64
+    gz_type_name: gz.msgs.Double
+
+  # Floor 1 door right feedback
+  - ros_topic_name: model/elevator_door_f1/joint/door_f1_right_joint/0/pos
+    gz_topic_name: /model/elevator_door_f1/joint/door_f1_right_joint/0/pos
+    direction: GZ_TO_ROS
+    ros_type_name: std_msgs/msg/Float64
+    gz_type_name: gz.msgs.Double
+
+  # Floor 4 door left
+  - ros_topic_name: model/elevator_door_f4/joint/door_f4_left_joint/0/cmd_pos
+    gz_topic_name: /model/elevator_door_f4/joint/door_f4_left_joint/0/cmd_pos
+    direction: ROS_TO_GZ
+    ros_type_name: std_msgs/msg/Float64
+    gz_type_name: gz.msgs.Double
+
+  # Floor 4 door right
+  - ros_topic_name: model/elevator_door_f4/joint/door_f4_right_joint/0/cmd_pos
+    gz_topic_name: /model/elevator_door_f4/joint/door_f4_right_joint/0/cmd_pos
+    direction: ROS_TO_GZ
+    ros_type_name: std_msgs/msg/Float64
+    gz_type_name: gz.msgs.Double
+
+  # Floor 4 door left feedback
+  - ros_topic_name: model/elevator_door_f4/joint/door_f4_left_joint/0/pos
+    gz_topic_name: /model/elevator_door_f4/joint/door_f4_left_joint/0/pos
+    direction: GZ_TO_ROS
+    ros_type_name: std_msgs/msg/Float64
+    gz_type_name: gz.msgs.Double
+
+  # Floor 4 door right feedback
+  - ros_topic_name: model/elevator_door_f4/joint/door_f4_right_joint/0/pos
+    gz_topic_name: /model/elevator_door_f4/joint/door_f4_right_joint/0/pos
+    direction: GZ_TO_ROS
+    ros_type_name: std_msgs/msg/Float64
+    gz_type_name: gz.msgs.Double
+
+  # =============================
+  # Camera topics for door detector
+  # =============================
+
+  - ros_topic_name: camera/camera/depth/image_rect_raw
+    gz_topic_name: /camera/depth/image
+    direction: GZ_TO_ROS
+    ros_type_name: sensor_msgs/msg/Image
+    gz_type_name: gz.msgs.Image
+
+  # =============================
+  # Direction detector camera feed
+  # =============================
+
+  - ros_topic_name: image
+    gz_topic_name: /camera/rgb/image
+    direction: GZ_TO_ROS
+    ros_type_name: sensor_msgs/msg/Image
+    gz_type_name: gz.msgs.Image

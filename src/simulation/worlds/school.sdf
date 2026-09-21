@@ -1,0 +1,1204 @@
+<?xml version="1.0" ?>
+<!-- School Building World for Food Cart Simulation -->
+<!-- Two floors with elevator, hallways, obstacles, and dynamic actors -->
+<sdf version="1.9">
+  <world name="school">
+
+    <!-- Physics engine -->
+    <physics name="1ms" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <!-- Scene settings -->
+    <scene>
+      <ambient>0.4 0.4 0.4 1.0</ambient>
+      <background>0.7 0.7 0.7 1.0</background>
+      <shadows>true</shadows>
+    </scene>
+
+    <!-- Sun light -->
+    <light name="sun" type="directional">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1.0</diffuse>
+      <specular>0.2 0.2 0.2 1.0</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- Ground plane -->
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/Microsoft/models/ground_plane</uri>
+    </include>
+
+    <!-- =========================================== -->
+    <!-- FLOOR 1 - Ground floor (z = 0)             -->
+    <!-- =========================================== -->
+
+    <!-- Floor 1 main slab -->
+    <model name="floor_1_slab">
+      <pose>0 0 -0.1 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>40 20 0.2</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>40 20 0.2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1.0</ambient>
+            <diffuse>0.5 0.5 0.5 1.0</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Floor 1 walls -->
+    <!-- North wall -->
+    <model name="floor_1_wall_north">
+      <pose>0 10 1.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>40 0.2 3.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>40 0.2 3.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- South wall -->
+    <model name="floor_1_wall_south">
+      <pose>0 -10 1.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>40 0.2 3.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>40 0.2 3.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- East wall -->
+    <model name="floor_1_wall_east">
+      <pose>20 0 1.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.2 20 3.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.2 20 3.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- West wall -->
+    <model name="floor_1_wall_west">
+      <pose>-20 0 1.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.2 20 3.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.2 20 3.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Floor 1 hallway (runs east-west) -->
+    <!-- Hallway walls -->
+    <model name="floor_1_hallway_north">
+      <pose>0 2 1.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>35 0.2 3.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>35 0.2 3.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="floor_1_hallway_south">
+      <pose>0 -2 1.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>35 0.2 3.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>35 0.2 3.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Classroom area (south of hallway) - dropoff zone -->
+    <model name="floor_1_classroom">
+      <pose>10 -6 1.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>15 6 3.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>15 6 3.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.6 0.8 0.6 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- =========================================== -->
+    <!-- FLOOR 4 - Top floor (z = 3.8 * 3 = 11.4m)  -->
+    <!-- Floor height from floor.yaml: 3.8m         -->
+    <!-- =========================================== -->
+
+    <!-- Floor 4 slab -->
+    <model name="floor_4_slab">
+      <pose>0 0 11.3 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>40 20 0.2</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>40 20 0.2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1.0</ambient>
+            <diffuse>0.5 0.5 0.5 1.0</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Floor 4 walls (same layout as floor 1) -->
+    <model name="floor_4_wall_north">
+      <pose>0 10 12.9 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>40 0.2 3.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>40 0.2 3.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="floor_4_wall_south">
+      <pose>0 -10 12.9 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>40 0.2 3.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>40 0.2 3.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="floor_4_wall_east">
+      <pose>20 0 12.9 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.2 20 3.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.2 20 3.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="floor_4_wall_west">
+      <pose>-20 0 12.9 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.2 20 3.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.2 20 3.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Floor 4 hallway -->
+    <model name="floor_4_hallway_north">
+      <pose>0 2 12.9 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>35 0.2 3.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>35 0.2 3.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="floor_4_hallway_south">
+      <pose>0 -2 12.9 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>35 0.2 3.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>35 0.2 3.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Kitchen area (north of hallway) - pickup zone -->
+    <model name="floor_4_kitchen">
+      <pose>-10 6 12.9 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>15 6 3.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>15 6 3.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.6 0.6 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- =========================================== -->
+    <!-- ELEVATOR SHAFT                              -->
+    <!-- Located at x=0, y=0 (center of building)   -->
+    <!-- Cab interior: 1.4m x 1.4m                  -->
+    <!-- Shaft extends from floor 1 to floor 4      -->
+    <!-- Floor height: 3.8m (from floor.yaml)       -->
+    <!-- =========================================== -->
+
+    <!-- Elevator shaft walls -->
+    <model name="elevator_shaft_east">
+      <pose>0.8 0 7.6 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.2 1.8 15.2</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.2 1.8 15.2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.4 0.4 0.4 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="elevator_shaft_west">
+      <pose>-0.8 0 7.6 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.2 1.8 15.2</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.2 1.8 15.2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.4 0.4 0.4 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="elevator_shaft_back">
+      <pose>0 -0.9 7.6 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>1.8 0.2 15.2</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>1.8 0.2 15.2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.4 0.4 0.4 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Elevator platform (moving cab) - uses prismatic joint -->
+    <model name="elevator_cab">
+      <pose>0 0 0 0 0 0</pose>
+      <link name="cab_platform">
+        <pose>0 0 0.05 0 0 0</pose>
+        <inertial>
+          <mass>500.0</mass>
+          <inertia>
+            <ixx>50.0</ixx>
+            <iyy>50.0</iyy>
+            <izz>50.0</izz>
+          </inertia>
+        </inertial>
+        <collision name="floor_collision">
+          <geometry>
+            <box>
+              <size>1.4 1.4 0.1</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="floor_visual">
+          <geometry>
+            <box>
+              <size>1.4 1.4 0.1</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.3 0.3 0.3 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+
+      <link name="cab_anchor">
+        <pose>0 0 0 0 0 0</pose>
+        <inertial>
+          <mass>1.0</mass>
+        </inertial>
+      </link>
+
+      <!-- Prismatic joint for vertical travel -->
+      <!-- Travel: 0 (floor 1) to 11.4m (floor 4) -->
+      <!-- Speed: 1.1 m/s cruise, Accel: 1.0 m/s^2 -->
+      <joint name="elevator_joint" type="prismatic">
+        <parent>cab_anchor</parent>
+        <child>cab_platform</child>
+        <axis>
+          <xyz>0 0 1</xyz>
+          <limit>
+            <lower>0.0</lower>
+            <upper>11.4</upper>
+            <velocity>1.1</velocity>
+            <effort>10000</effort>
+          </limit>
+          <dynamics>
+            <damping>100.0</damping>
+          </dynamics>
+        </axis>
+      </joint>
+
+      <!-- Fix anchor to world -->
+      <joint name="anchor_to_world" type="fixed">
+        <parent>world</parent>
+        <child>cab_anchor</child>
+      </joint>
+    </model>
+
+    <!-- Elevator doors - Floor 1 (front-facing, y+ direction) -->
+    <model name="elevator_door_f1">
+      <pose>0 0.8 0 0 0 0</pose>
+      <link name="door_left">
+        <pose>-0.35 0 1.2 0 0 0</pose>
+        <inertial>
+          <mass>30.0</mass>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.7 0.05 2.4</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.7 0.05 2.4</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.6 0.6 0.7 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+
+      <link name="door_right">
+        <pose>0.35 0 1.2 0 0 0</pose>
+        <inertial>
+          <mass>30.0</mass>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.7 0.05 2.4</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.7 0.05 2.4</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.6 0.6 0.7 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+
+      <link name="door_frame">
+        <pose>0 0 0 0 0 0</pose>
+        <inertial>
+          <mass>1.0</mass>
+        </inertial>
+      </link>
+
+      <!-- Left door slides left -->
+      <joint name="door_f1_left_joint" type="prismatic">
+        <parent>door_frame</parent>
+        <child>door_left</child>
+        <axis>
+          <xyz>1 0 0</xyz>
+          <limit>
+            <lower>-0.65</lower>
+            <upper>0.0</upper>
+            <velocity>0.35</velocity>
+            <effort>500</effort>
+          </limit>
+        </axis>
+      </joint>
+
+      <!-- Right door slides right -->
+      <joint name="door_f1_right_joint" type="prismatic">
+        <parent>door_frame</parent>
+        <child>door_right</child>
+        <axis>
+          <xyz>1 0 0</xyz>
+          <limit>
+            <lower>0.0</lower>
+            <upper>0.65</upper>
+            <velocity>0.35</velocity>
+            <effort>500</effort>
+          </limit>
+        </axis>
+      </joint>
+
+      <joint name="frame_to_world" type="fixed">
+        <parent>world</parent>
+        <child>door_frame</child>
+      </joint>
+    </model>
+
+    <!-- Elevator doors - Floor 4 -->
+    <model name="elevator_door_f4">
+      <pose>0 0.8 11.4 0 0 0</pose>
+      <link name="door_left">
+        <pose>-0.35 0 1.2 0 0 0</pose>
+        <inertial>
+          <mass>30.0</mass>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.7 0.05 2.4</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.7 0.05 2.4</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.6 0.6 0.7 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+
+      <link name="door_right">
+        <pose>0.35 0 1.2 0 0 0</pose>
+        <inertial>
+          <mass>30.0</mass>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.7 0.05 2.4</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.7 0.05 2.4</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.6 0.6 0.7 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+
+      <link name="door_frame">
+        <pose>0 0 0 0 0 0</pose>
+        <inertial>
+          <mass>1.0</mass>
+        </inertial>
+      </link>
+
+      <joint name="door_f4_left_joint" type="prismatic">
+        <parent>door_frame</parent>
+        <child>door_left</child>
+        <axis>
+          <xyz>1 0 0</xyz>
+          <limit>
+            <lower>-0.65</lower>
+            <upper>0.0</upper>
+            <velocity>0.35</velocity>
+            <effort>500</effort>
+          </limit>
+        </axis>
+      </joint>
+
+      <joint name="door_f4_right_joint" type="prismatic">
+        <parent>door_frame</parent>
+        <child>door_right</child>
+        <axis>
+          <xyz>1 0 0</xyz>
+          <limit>
+            <lower>0.0</lower>
+            <upper>0.65</upper>
+            <velocity>0.35</velocity>
+            <effort>500</effort>
+          </limit>
+        </axis>
+      </joint>
+
+      <joint name="frame_to_world" type="fixed">
+        <parent>world</parent>
+        <child>door_frame</child>
+      </joint>
+    </model>
+
+    <!-- =========================================== -->
+    <!-- HALLWAY OBSTACLES                           -->
+    <!-- =========================================== -->
+
+    <!-- Floor 1 obstacles -->
+    <model name="bench_f1_1">
+      <pose>5 1.5 0.25 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>1.5 0.5 0.5</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>1.5 0.5 0.5</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.3 0.1 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="trash_can_f1_1">
+      <pose>-5 -1.5 0.4 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>0.8</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>0.8</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.2 0.5 0.2 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="locker_f1_1">
+      <pose>-8 1.9 0.9 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>3.0 0.4 1.8</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>3.0 0.4 1.8</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.3 0.3 0.5 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="pillar_f1_1">
+      <pose>3 0 1.5 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.2</radius>
+              <length>3.0</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder>
+              <radius>0.2</radius>
+              <length>3.0</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Floor 4 obstacles -->
+    <model name="bench_f4_1">
+      <pose>-5 1.5 11.65 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>1.5 0.5 0.5</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>1.5 0.5 0.5</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.3 0.1 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="trash_can_f4_1">
+      <pose>7 -1.5 11.8 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>0.8</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder>
+              <radius>0.25</radius>
+              <length>0.8</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.2 0.5 0.2 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="locker_f4_1">
+      <pose>5 1.9 12.3 0 0 0</pose>
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>3.0 0.4 1.8</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>3.0 0.4 1.8</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.3 0.3 0.5 1.0</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- =========================================== -->
+    <!-- DYNAMIC ACTORS - Walking people             -->
+    <!-- 4-6 animated walkers that patrol hallways   -->
+    <!-- =========================================== -->
+
+    <!-- Actor 1: Patrols floor 1 hallway east-west -->
+    <actor name="pedestrian_1">
+      <pose>-10 0 0 0 0 0</pose>
+      <skin>
+        <filename>https://fuel.gazebosim.org/1.0/Mingfei/models/actor/meshes/walk.dae</filename>
+        <scale>1.0</scale>
+      </skin>
+      <animation name="walk">
+        <filename>https://fuel.gazebosim.org/1.0/Mingfei/models/actor/meshes/walk.dae</filename>
+        <scale>1.0</scale>
+        <interpolate_x>true</interpolate_x>
+      </animation>
+      <script>
+        <loop>true</loop>
+        <delay_start>0</delay_start>
+        <auto_start>true</auto_start>
+        <trajectory id="0" type="walk">
+          <waypoint>
+            <time>0</time>
+            <pose>-10 0 0 0 0 0</pose>
+          </waypoint>
+          <waypoint>
+            <time>15</time>
+            <pose>10 0 0 0 0 0</pose>
+          </waypoint>
+          <waypoint>
+            <time>30</time>
+            <pose>-10 0 0 0 0 3.14</pose>
+          </waypoint>
+        </trajectory>
+      </script>
+    </actor>
+
+    <!-- Actor 2: Patrols floor 1 hallway perpendicular -->
+    <actor name="pedestrian_2">
+      <pose>5 -1.5 0 0 0 1.57</pose>
+      <skin>
+        <filename>https://fuel.gazebosim.org/1.0/Mingfei/models/actor/meshes/walk.dae</filename>
+        <scale>1.0</scale>
+      </skin>
+      <animation name="walk">
+        <filename>https://fuel.gazebosim.org/1.0/Mingfei/models/actor/meshes/walk.dae</filename>
+        <scale>1.0</scale>
+        <interpolate_x>true</interpolate_x>
+      </animation>
+      <script>
+        <loop>true</loop>
+        <delay_start>3</delay_start>
+        <auto_start>true</auto_start>
+        <trajectory id="0" type="walk">
+          <waypoint>
+            <time>0</time>
+            <pose>5 -1.5 0 0 0 1.57</pose>
+          </waypoint>
+          <waypoint>
+            <time>8</time>
+            <pose>5 1.5 0 0 0 1.57</pose>
+          </waypoint>
+          <waypoint>
+            <time>16</time>
+            <pose>5 -1.5 0 0 0 -1.57</pose>
+          </waypoint>
+        </trajectory>
+      </script>
+    </actor>
+
+    <!-- Actor 3: Stands IN the elevator cab periodically -->
+    <!-- Tests unhandled scenario: person blocks entry -->
+    <actor name="pedestrian_in_elevator">
+      <pose>0 0 0.1 0 0 0</pose>
+      <skin>
+        <filename>https://fuel.gazebosim.org/1.0/Mingfei/models/actor/meshes/walk.dae</filename>
+        <scale>1.0</scale>
+      </skin>
+      <animation name="walk">
+        <filename>https://fuel.gazebosim.org/1.0/Mingfei/models/actor/meshes/walk.dae</filename>
+        <scale>1.0</scale>
+        <interpolate_x>true</interpolate_x>
+      </animation>
+      <script>
+        <loop>true</loop>
+        <delay_start>5</delay_start>
+        <auto_start>true</auto_start>
+        <trajectory id="0" type="walk">
+          <!-- Walks into elevator, stands for 20s, walks out -->
+          <waypoint>
+            <time>0</time>
+            <pose>0 2 0 0 0 -1.57</pose>
+          </waypoint>
+          <waypoint>
+            <time>5</time>
+            <pose>0 0.2 0 0 0 -1.57</pose>
+          </waypoint>
+          <waypoint>
+            <time>25</time>
+            <pose>0 0.2 0 0 0 -1.57</pose>
+          </waypoint>
+          <waypoint>
+            <time>30</time>
+            <pose>0 2 0 0 0 1.57</pose>
+          </waypoint>
+          <waypoint>
+            <time>50</time>
+            <pose>0 2 0 0 0 1.57</pose>
+          </waypoint>
+        </trajectory>
+      </script>
+    </actor>
+
+    <!-- Actor 4: Walks across elevator door path during opening -->
+    <actor name="pedestrian_door_crosser">
+      <pose>-3 0.8 0 0 0 0</pose>
+      <skin>
+        <filename>https://fuel.gazebosim.org/1.0/Mingfei/models/actor/meshes/walk.dae</filename>
+        <scale>1.0</scale>
+      </skin>
+      <animation name="walk">
+        <filename>https://fuel.gazebosim.org/1.0/Mingfei/models/actor/meshes/walk.dae</filename>
+        <scale>1.0</scale>
+        <interpolate_x>true</interpolate_x>
+      </animation>
+      <script>
+        <loop>true</loop>
+        <delay_start>10</delay_start>
+        <auto_start>true</auto_start>
+        <trajectory id="0" type="walk">
+          <waypoint>
+            <time>0</time>
+            <pose>-3 0.8 0 0 0 0</pose>
+          </waypoint>
+          <waypoint>
+            <time>5</time>
+            <pose>3 0.8 0 0 0 0</pose>
+          </waypoint>
+          <waypoint>
+            <time>10</time>
+            <pose>-3 0.8 0 0 0 3.14</pose>
+          </waypoint>
+        </trajectory>
+      </script>
+    </actor>
+
+    <!-- Actor 5: Patrols floor 4 hallway -->
+    <actor name="pedestrian_f4_1">
+      <pose>-8 0 11.4 0 0 0</pose>
+      <skin>
+        <filename>https://fuel.gazebosim.org/1.0/Mingfei/models/actor/meshes/walk.dae</filename>
+        <scale>1.0</scale>
+      </skin>
+      <animation name="walk">
+        <filename>https://fuel.gazebosim.org/1.0/Mingfei/models/actor/meshes/walk.dae</filename>
+        <scale>1.0</scale>
+        <interpolate_x>true</interpolate_x>
+      </animation>
+      <script>
+        <loop>true</loop>
+        <delay_start>0</delay_start>
+        <auto_start>true</auto_start>
+        <trajectory id="0" type="walk">
+          <waypoint>
+            <time>0</time>
+            <pose>-8 0 11.4 0 0 0</pose>
+          </waypoint>
+          <waypoint>
+            <time>12</time>
+            <pose>8 0 11.4 0 0 0</pose>
+          </waypoint>
+          <waypoint>
+            <time>24</time>
+            <pose>-8 0 11.4 0 0 3.14</pose>
+          </waypoint>
+        </trajectory>
+      </script>
+    </actor>
+
+    <!-- Actor 6: Patrols floor 4 near kitchen -->
+    <actor name="pedestrian_f4_2">
+      <pose>-12 3 11.4 0 0 1.57</pose>
+      <skin>
+        <filename>https://fuel.gazebosim.org/1.0/Mingfei/models/actor/meshes/walk.dae</filename>
+        <scale>1.0</scale>
+      </skin>
+      <animation name="walk">
+        <filename>https://fuel.gazebosim.org/1.0/Mingfei/models/actor/meshes/walk.dae</filename>
+        <scale>1.0</scale>
+        <interpolate_x>true</interpolate_x>
+      </animation>
+      <script>
+        <loop>true</loop>
+        <delay_start>7</delay_start>
+        <auto_start>true</auto_start>
+        <trajectory id="0" type="walk">
+          <waypoint>
+            <time>0</time>
+            <pose>-12 3 11.4 0 0 0</pose>
+          </waypoint>
+          <waypoint>
+            <time>10</time>
+            <pose>-5 3 11.4 0 0 0</pose>
+          </waypoint>
+          <waypoint>
+            <time>20</time>
+            <pose>-12 3 11.4 0 0 3.14</pose>
+          </waypoint>
+        </trajectory>
+      </script>
+    </actor>
+
+    <!-- =========================================== -->
+    <!-- PLUGINS                                     -->
+    <!-- =========================================== -->
+
+    <!-- Physics plugin -->
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics">
+    </plugin>
+
+    <!-- User commands plugin (needed for joint control) -->
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands">
+    </plugin>
+
+    <!-- Scene broadcaster -->
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster">
+    </plugin>
+
+    <!-- Sensors plugin (for lidar, camera, imu) -->
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <!-- IMU plugin -->
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu">
+    </plugin>
+
+    <!-- Contact plugin -->
+    <plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact">
+    </plugin>
+
+  </world>
+</sdf>
